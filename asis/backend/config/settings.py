@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     allowed_origins: list[str] = ["http://localhost:3000"]
 
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v: object) -> list[str]:
+        if isinstance(v, list):
+            return v
+        if not isinstance(v, str) or not v.strip():
+            return ["http://localhost:3000"]
+        v = v.strip()
+        if v.startswith("["):
+            import json as _json
+            return _json.loads(v)
+        return [s.strip() for s in v.split(",") if s.strip()]
+
     # ── Security ──────────────────────────────────────────────────────────────
     jwt_secret: SecretStr = Field(..., description="JWT signing secret (min 32 chars)")
     jwt_algorithm: str = "HS256"
