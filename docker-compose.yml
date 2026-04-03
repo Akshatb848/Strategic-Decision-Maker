@@ -1,0 +1,78 @@
+version: "3.9"
+
+# ── Local development compose ─────────────────────────────────────────────────
+# Usage: docker-compose up --build
+# Services: backend (8000), frontend (3000), postgres (5432), redis (6379)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: asis
+      POSTGRES_PASSWORD: asis
+      POSTGRES_DB: asis
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./asis/backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asis:asis@postgres:5432/asis
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      DEBUG: "true"
+      LOG_LEVEL: DEBUG
+      # Secrets — override with real values in .env
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-real-secret-at-least-32-chars}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      FMP_API_KEY: ${FMP_API_KEY:-}
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+      ALLOWED_ORIGINS: "http://localhost:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./asis/backend:/app/asis/backend
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./asis/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,42 @@
+version: "3.9"
+
+# ── Production compose (Railway / self-hosted) ────────────────────────────────
+# All secrets come from Railway environment variables or a .env.prod file.
+
+services:
+  backend:
+    build:
+      context: ./asis/backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-}
+      ENVIRONMENT: production
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      JWT_SECRET: ${JWT_SECRET}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      FMP_API_KEY: ${FMP_API_KEY:-}
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://asis.up.railway.app}
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./asis/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://asis-api.up.railway.app/api/v1}
+    depends_on:
+      - backend
+    restart: always
