@@ -8,7 +8,9 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, SecretStr, field_validator
+import json as _json
+
+from pydantic import AliasChoices, Field, PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,19 +33,22 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_prefix: str = "/api/v1"
-    allowed_origins: list[str] = ["http://localhost:3000"]
+    # Stored as str so pydantic-settings skips JSON pre-parsing; exposed as list via property
+    allowed_origins_raw: str = Field(
+        default="http://localhost:3000",
+        validation_alias=AliasChoices("allowed_origins", "ALLOWED_ORIGINS"),
+    )
 
-    @field_validator("allowed_origins", mode="before")
-    @classmethod
-    def parse_allowed_origins(cls, v: object) -> list[str]:
-        if isinstance(v, list):
-            return v
-        if not isinstance(v, str) or not v.strip():
+    @property
+    def allowed_origins(self) -> list[str]:
+        v = self.allowed_origins_raw.strip()
+        if not v:
             return ["http://localhost:3000"]
-        v = v.strip()
         if v.startswith("["):
-            import json as _json
-            return _json.loads(v)
+            try:
+                return _json.loads(v)
+            except Exception:
+                pass
         return [s.strip() for s in v.split(",") if s.strip()]
 
     # ── Security ──────────────────────────────────────────────────────────────
