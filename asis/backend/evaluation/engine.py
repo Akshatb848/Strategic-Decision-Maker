@@ -11,7 +11,7 @@ Dimensions (each 0-10):
   internal_consistency — coherence across agent outputs
   overall_score        — weighted average using settings.eval_weights
 
-Model: claude_haiku_model (cheap, fast) for cost-efficient dissertation runs.
+Calls the LiteLLM proxy via httpx (no litellm SDK needed).
 Returns neutral 5.0 scores on any failure rather than crashing.
 """
 
@@ -22,6 +22,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+import httpx
 
 from ..config import get_logger, get_settings
 from ..schemas.evaluation import DimensionScore, EvaluationResult
@@ -67,18 +69,40 @@ _NEUTRAL_SCORES: dict[str, float] = {
 _DIMENSIONS = list(_NEUTRAL_SCORES.keys())
 
 
+async def _call_proxy(
+    model: str,
+    messages: list[dict[str, str]],
+    max_tokens: int = 1000,
+    temperature: float = 0.0,
+) -> str:
+    """POST to the LiteLLM proxy and return the assistant message content."""
+    url = f"{settings.litellm_proxy_url}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.litellm_master_key.get_secret_value()}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"] or ""
+
+
 class EvaluationEngine:
     """
-    Scores strategic brief outputs using LiteLLM (Haiku model for cost efficiency).
+    Scores strategic brief outputs via the LiteLLM proxy (Haiku model for cost efficiency).
 
-    All evaluation calls route through the LiteLLM proxy — never directly to Anthropic.
+    Uses httpx directly — no litellm SDK required.
     Returns neutral 5.0 scores on any failure rather than propagating exceptions.
     """
 
     def __init__(self) -> None:
-        import litellm  # type: ignore[import]
-
-        self._litellm = litellm
         self._model = settings.claude_haiku_model
 
     async def evaluate(
@@ -89,11 +113,6 @@ class EvaluationEngine:
     ) -> dict[str, float]:
         """
         Score a StrategicBrief on all five evaluation dimensions.
-
-        Args:
-            strategic_brief_dict: The StrategicBrief JSON dict to evaluate.
-            query: The original strategic query (provides context for relevance scoring).
-            baseline_output: Optional baseline dict — not scored here, used for reference only.
 
         Returns:
             dict with keys: analytical_depth, factual_accuracy, contextual_relevance,
@@ -107,18 +126,15 @@ class EvaluationEngine:
 
         scores_raw: dict[str, Any] = {}
         try:
-            response = await self._litellm.acompletion(
+            raw_text = await _call_proxy(
                 model=self._model,
                 messages=[
                     {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=1000,
-                temperature=0.0,  # deterministic scoring
-                api_base=settings.litellm_proxy_url,
-                api_key=settings.litellm_master_key.get_secret_value(),
+                temperature=0.0,
             )
-            raw_text = response.choices[0].message.content or "{}"
             clean = _strip_fences(raw_text)
             scores_raw = json.loads(clean)
 
@@ -131,13 +147,11 @@ class EvaluationEngine:
             )
             return {**_NEUTRAL_SCORES, "overall_score": 5.0}
 
-        # Clamp all dimension scores to [0, 10]
         scores: dict[str, float] = {}
         for dim in _DIMENSIONS:
             raw = float(scores_raw.get(dim, 5.0))
             scores[dim] = max(0.0, min(10.0, raw))
 
-        # Compute weighted overall score using config weights
         weights = settings.eval_weights
         overall = sum(scores[dim] * weights.get(dim, 0.2) for dim in _DIMENSIONS)
         scores["overall_score"] = round(overall, 2)
@@ -156,11 +170,7 @@ class EvaluationEngine:
         report_type: str,
         evaluation_tokens: int = 0,
     ) -> EvaluationResult:
-        """
-        Wrap a raw scores dict into the structured EvaluationResult schema.
-
-        Useful when callers need the full DimensionScore objects with rationale.
-        """
+        """Wrap a raw scores dict into the structured EvaluationResult schema."""
         weights = settings.eval_weights
 
         def _dim(name: str) -> DimensionScore:

@@ -3,6 +3,7 @@ SingleAgentBaseline v3.0 — processes the same query with a single LLM call,
 no agent decomposition. Used for dissertation comparison against the
 multi-agent ASIS pipeline (Wilcoxon signed-rank test).
 
+Calls the LiteLLM proxy via httpx (no litellm SDK needed).
 Model: claude_haiku_model (haiku) for cost efficiency on dissertation runs.
 """
 
@@ -15,9 +16,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from ..config import get_logger, get_settings
 from ..db import BaselineRun
-from .engine import EvaluationEngine
+from .engine import EvaluationEngine, _call_proxy
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -60,16 +63,14 @@ Output valid JSON matching this structure:
 
 class SingleAgentBaseline:
     """
-    Runs the full strategic query through a single LiteLLM call (Haiku model).
+    Runs the full strategic query through a single LLM call (Haiku model).
 
     Does NOT use the multi-agent pipeline — this is the dissertation control condition.
     Results are scored by EvaluationEngine and stored as a BaselineRun ORM object.
+    Uses httpx directly — no litellm SDK required.
     """
 
     def __init__(self) -> None:
-        import litellm  # type: ignore[import]
-
-        self._litellm = litellm
         self._model = settings.claude_haiku_model
         self._eval_engine = EvaluationEngine()
 
@@ -84,14 +85,6 @@ class SingleAgentBaseline:
 
         The returned object is NOT committed to the database — the caller must
         add it to a session and commit.
-
-        Args:
-            query: The strategic query.
-            company_context: Company context dict.
-            tenant_id: Tenant identifier (stored on the record but not used for routing).
-
-        Returns:
-            BaselineRun ORM instance (unsaved).
         """
         start_ms = int(time.time() * 1000)
 
@@ -105,7 +98,7 @@ class SingleAgentBaseline:
         tokens_used = 0
 
         try:
-            response = await self._litellm.acompletion(
+            raw_text = await _call_proxy(
                 model=self._model,
                 messages=[
                     {"role": "system", "content": _BASELINE_SYSTEM_PROMPT},
@@ -113,16 +106,8 @@ class SingleAgentBaseline:
                 ],
                 max_tokens=settings.claude_max_tokens,
                 temperature=0.3,
-                api_base=settings.litellm_proxy_url,
-                api_key=settings.litellm_master_key.get_secret_value(),
             )
 
-            raw_text = response.choices[0].message.content or ""
-            tokens_used = (
-                response.usage.total_tokens if response.usage else 0
-            )
-
-            # Parse JSON output — strip fences if present
             clean = raw_text.strip()
             if clean.startswith("```"):
                 clean = re.sub(r"^```(?:json)?\s*", "", clean)
@@ -157,7 +142,6 @@ class SingleAgentBaseline:
             tokens_used=tokens_used,
         )
 
-        # Evaluate the baseline output using EvaluationEngine
         scores: dict[str, float] = {}
         try:
             scores = await self._eval_engine.evaluate(output, query)
@@ -172,7 +156,6 @@ class SingleAgentBaseline:
                 "overall_score": 5.0,
             }
 
-        # Return unpersisted ORM object — caller commits
         return BaselineRun(
             output=output,
             tokens_used=tokens_used,
