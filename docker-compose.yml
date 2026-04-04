@@ -1,10 +1,15 @@
 version: "3.9"
 
-# ── Local development compose ─────────────────────────────────────────────────
+# ── ASIS v3.0 — Local Development Compose ─────────────────────────────────────
 # Usage: docker-compose up --build
-# Services: backend (8000), frontend (3000), postgres (5432), redis (6379)
+# Services: backend (8000), frontend (3000), postgres (5432), redis (6379),
+#           qdrant (6333), litellm (4000), langfuse (3001), n8n (5678),
+#           celery-worker
 
 services:
+
+  # ── Data Stores ──────────────────────────────────────────────────────────────
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -33,33 +38,135 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── LLM Proxy ────────────────────────────────────────────────────────────────
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-dev-master-key}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  # ── Observability ─────────────────────────────────────────────────────────────
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: postgresql://asis:asis@postgres:5432/asis
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-langfuse-secret}
+      SALT: ${LANGFUSE_SALT:-change-me-langfuse-salt}
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/public/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  # ── Workflow Automation ───────────────────────────────────────────────────────
+
+  n8n:
     build:
-      context: ./asis/backend
+      context: ./asis/n8n
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "5678:5678"
     environment:
-      DATABASE_URL: postgresql+asyncpg://asis:asis@postgres:5432/asis
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: development
-      DEBUG: "true"
-      LOG_LEVEL: DEBUG
-      # Secrets — override with real values in .env
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-real-secret-at-least-32-chars}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
-      FMP_API_KEY: ${FMP_API_KEY:-}
-      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
-      ALLOWED_ORIGINS: "http://localhost:3000"
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: asis
+      DB_POSTGRESDB_USER: asis
+      DB_POSTGRESDB_PASSWORD: asis
+      QUEUE_BULL_REDIS_HOST: redis
+      QUEUE_BULL_REDIS_PORT: 6379
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      WEBHOOK_URL: http://localhost:5678
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      GENERIC_TIMEZONE: UTC
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
+      - ./asis/n8n/workflows:/home/node/.n8n/workflows:ro
+
+  # ── Application Services ──────────────────────────────────────────────────────
+
+  backend:
+    build:
+      context: ./asis/backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asis:asis@postgres:5432/asis
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      QDRANT_URL: http://qdrant:6333
+      LITELLM_PROXY_URL: http://litellm:4000
+      LANGFUSE_HOST: http://langfuse:3000
+      ENVIRONMENT: development
+      LOG_LEVEL: DEBUG
+      ALLOWED_ORIGINS: "http://localhost:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    volumes:
       - ./asis/backend:/app/asis/backend
-    restart: unless-stopped
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
 
   frontend:
     build:
@@ -71,8 +178,33 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
     depends_on:
       - backend
-    restart: unless-stopped
+    restart: always
+
+  celery-worker:
+    build:
+      context: ./asis/backend
+      dockerfile: Dockerfile
+    command: celery -A asis.backend.tasks.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asis:asis@postgres:5432/asis
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      QDRANT_URL: http://qdrant:6333
+      LITELLM_PROXY_URL: http://litellm:4000
+      LANGFUSE_HOST: http://langfuse:3000
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
 
 volumes:
   postgres_data:
   redis_data:
+  qdrant_data:

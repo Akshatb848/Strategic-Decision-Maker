@@ -1,0 +1,260 @@
+{
+  "name": "ASIS WF05 — Qdrant Knowledge Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "={{ $env.GDRIVE_ASIS_KNOWLEDGE_FOLDER_ID }}",
+          "mode": "id"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "gdrive-trigger",
+      "name": "Google Drive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "gdrive-credential",
+          "name": "Google Drive ASIS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "file_id",
+              "name": "file_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "file_name",
+              "name": "file_name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "mime_type",
+              "name": "mime_type",
+              "value": "={{ $json.mimeType }}",
+              "type": "string"
+            },
+            {
+              "id": "doc_type",
+              "name": "doc_type",
+              "value": "={{ $json.name.toLowerCase().includes('market') ? 'market_report' : $json.name.toLowerCase().includes('risk') ? 'regulatory' : $json.name.toLowerCase().includes('competitor') ? 'competitor_intel' : 'general' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-metadata",
+      "name": "Extract File Metadata",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.file_id }}",
+          "mode": "id"
+        },
+        "options": {
+          "googleFileConversion": {
+            "docsToFormat": "text/plain"
+          }
+        }
+      },
+      "id": "download-file",
+      "name": "Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [680, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "gdrive-credential",
+          "name": "Google Drive ASIS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Chunk text into 1000-char segments with 200-char overlap\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const binaryData = item.binary?.data;\n  if (!binaryData) continue;\n\n  // Decode binary to text\n  const text = Buffer.from(binaryData.data, 'base64').toString('utf-8');\n  const fileName = item.json.file_name || 'unknown';\n  const docType = item.json.doc_type || 'general';\n\n  const CHUNK_SIZE = 1000;\n  const OVERLAP = 200;\n  const chunks = [];\n\n  let start = 0;\n  while (start < text.length) {\n    const end = Math.min(start + CHUNK_SIZE, text.length);\n    const chunk = text.slice(start, end).trim();\n    if (chunk.length > 50) {  // skip tiny fragments\n      chunks.push(chunk);\n    }\n    start += CHUNK_SIZE - OVERLAP;\n  }\n\n  for (let i = 0; i < chunks.length; i++) {\n    results.push({\n      json: {\n        text: chunks[i],\n        chunk_index: i,\n        total_chunks: chunks.length,\n        file_name: fileName,\n        doc_type: docType,\n        file_id: item.json.file_id\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "chunk-text",
+      "name": "Chunk Text (1000/200)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LITELLM_PROXY_URL }}/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LITELLM_MASTER_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": [{{ JSON.stringify($json.text) }}]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "embed-chunk",
+      "name": "LiteLLM Embed Chunk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Combine chunk text+metadata with embedding vector\nconst allItems = $input.all();\nconst results = [];\n\nfor (const item of allItems) {\n  const embedding = item.json.data?.[0]?.embedding;\n  if (!embedding) continue;\n\n  results.push({\n    json: {\n      id: $crypto.randomUUID(),\n      vector: embedding,\n      payload: {\n        text: item.json.text,\n        chunk_index: item.json.chunk_index,\n        total_chunks: item.json.total_chunks,\n        file_name: item.json.file_name,\n        doc_type: item.json.doc_type,\n        file_id: item.json.file_id,\n        tenant_id: $env.ASIS_DEFAULT_TENANT,\n        ingested_at: new Date().toISOString()\n      }\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "build-point",
+      "name": "Build Qdrant Point",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.QDRANT_URL }}/collections/tenant_{{ $env.ASIS_DEFAULT_TENANT }}_{{ $json.payload.doc_type }}/points",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": \"{{ $json.id }}\",\n    \"vector\": {{ JSON.stringify($json.vector) }},\n    \"payload\": {{ JSON.stringify($json.payload) }}\n  }]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "upsert-qdrant",
+      "name": "Upsert to Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Google Drive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract File Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract File Metadata": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Chunk Text (1000/200)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Text (1000/200)": {
+      "main": [
+        [
+          {
+            "node": "LiteLLM Embed Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LiteLLM Embed Chunk": {
+      "main": [
+        [
+          {
+            "node": "Build Qdrant Point",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Qdrant Point": {
+      "main": [
+        [
+          {
+            "node": "Upsert to Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "asis-knowledge",
+      "name": "asis-knowledge"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "v3.0.0"
+}

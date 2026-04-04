@@ -1,6 +1,6 @@
 """
-ASIS shared AgentState — the single source of truth passed through
-every LangGraph node. Every agent reads from and writes to this TypedDict.
+ASIS v3.0 shared AgentState — single source of truth for LangGraph nodes.
+Every agent reads from and writes to this TypedDict (never mutates in place).
 """
 
 from __future__ import annotations
@@ -11,26 +11,27 @@ from typing_extensions import TypedDict
 
 class AgentState(TypedDict, total=False):
     # ── Input ──────────────────────────────────────────────────────────────
-    query: str                        # Original user strategic query
-    company_context: dict[str, Any]  # Firm name, sector, target market, HQ, etc.
-    options: dict[str, Any]          # User-selected analysis options
+    query: str
+    company_context: dict[str, Any]
+    options: dict[str, Any]
 
     # ── Orchestrator output ────────────────────────────────────────────────
-    task_plan: Optional[dict[str, Any]]  # Structured execution plan
-    agent_sequence: Optional[list[str]]  # Ordered list of agents to invoke
-    analysis_id: Optional[str]           # UUID of the DB analysis record
+    task_plan: Optional[dict[str, Any]]
+    agent_sequence: Optional[list[str]]
+    analysis_id: Optional[str]
+    tenant_id: Optional[str]
 
     # ── Specialist agent outputs ───────────────────────────────────────────
-    market_report: Optional[dict[str, Any]]     # Agent 2 — MarketIntelligenceReport
-    risk_register: Optional[dict[str, Any]]     # Agent 3 — RiskRegister
-    financial_model: Optional[dict[str, Any]]   # Agent 4 — FinancialModel
-    competitor_brief: Optional[dict[str, Any]]  # Agent 5 — CompetitorBrief
+    market_report: Optional[dict[str, Any]]
+    risk_register: Optional[dict[str, Any]]
+    financial_model: Optional[dict[str, Any]]
+    competitor_brief: Optional[dict[str, Any]]
 
     # ── Final synthesis output ─────────────────────────────────────────────
-    strategic_brief: Optional[dict[str, Any]]  # Agent 6 — StrategicBrief
+    strategic_brief: Optional[dict[str, Any]]
 
     # ── Error accumulator ─────────────────────────────────────────────────
     errors: list[str]
 
-    # ── Metadata ──────────────────────────────────────────────────────────
-    metadata: dict[str, Any]  # Timestamps, token usage, sources, SSE callbacks
+    # ── Metadata (SSE callback, tokens, trace IDs, RAG hits, Mem0 context) ─
+    metadata: dict[str, Any]

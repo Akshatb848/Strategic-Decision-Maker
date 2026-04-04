@@ -1,141 +1,367 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
+import { slideUp, fadeIn } from "@/lib/animations";
 import { getAnalysis, type AnalysisDetail, type StrategicBrief } from "@/lib/api";
-import { AgentStatusPanel } from "@/components/AgentStatusPanel";
+import { AgentTimeline } from "@/components/AgentTimeline";
 import { StrategyBrief } from "@/components/StrategyBrief";
-import { ArrowLeft, Cpu } from "lucide-react";
+import { StatusBadge } from "@/components/ui/Badge";
+import { ArrowLeft, Terminal } from "lucide-react";
+
+interface LogEntry {
+  ts: number;
+  message: string;
+  level: "info" | "error" | "success";
+}
 
 export default function AnalysisDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const addLog = (message: string, level: LogEntry["level"] = "info") => {
+    setLogs((prev) => [
+      ...prev,
+      { ts: Date.now(), message, level },
+    ]);
+  };
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
 
   useEffect(() => {
     if (!id) return;
 
+    addLog(`Loading analysis ${id}…`);
+
     const load = () =>
       getAnalysis(id)
-        .then(setDetail)
-        .catch((e) => setError(e.message));
+        .then((d) => {
+          setDetail(d);
+          addLog(
+            `Analysis loaded — status: ${d.status}`,
+            d.status === "failed" ? "error" : "info"
+          );
+          return d;
+        })
+        .catch((e: Error) => {
+          setError(e.message);
+          addLog(`Error: ${e.message}`, "error");
+          return null;
+        });
 
     load().finally(() => setLoading(false));
 
     // Poll while running
-    let interval: ReturnType<typeof setInterval> | null = null;
-    const startPolling = () => {
-      interval = setInterval(() => {
-        getAnalysis(id).then((d) => {
-          setDetail(d);
-          if (d.status === "completed" || d.status === "failed") {
-            clearInterval(interval!);
-          }
-        });
-      }, 3000);
-    };
+    const interval = setInterval(async () => {
+      const d = await getAnalysis(id).catch(() => null);
+      if (!d) return;
+      setDetail(d);
 
-    startPolling();
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+      if (d.status === "completed") {
+        addLog("Pipeline complete.", "success");
+        clearInterval(interval);
+      } else if (d.status === "failed") {
+        addLog("Pipeline failed.", "error");
+        clearInterval(interval);
+      } else {
+        const running = d.agent_runs.find((r) => r.status === "running");
+        if (running) {
+          addLog(`[${running.agent_name}] running…`);
+        }
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, [id]);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-surface flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <span className="w-10 h-10 border-4 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-          <p className="text-gray-400 text-sm">Loading analysis…</p>
-        </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "60vh",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            border: "3px solid var(--border)",
+            borderTopColor: "var(--accent)",
+            animation: "spin 0.8s linear infinite",
+          }}
+        />
+        <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
+          Loading analysis…
+        </p>
       </div>
     );
   }
 
   if (error || !detail) {
     return (
-      <div className="min-h-screen bg-surface flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-400 mb-4">{error ?? "Analysis not found"}</p>
-          <Link href="/" className="btn-secondary">Back to dashboard</Link>
-        </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "60vh",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        <p style={{ fontSize: 14, color: "var(--danger)" }}>
+          {error ?? "Analysis not found"}
+        </p>
+        <Link
+          href="/"
+          style={{
+            fontSize: 13,
+            color: "var(--accent)",
+            textDecoration: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <ArrowLeft size={14} />
+          Back to dashboard
+        </Link>
       </div>
     );
   }
 
+  const isComplete = detail.status === "completed" && detail.strategic_brief != null;
+
   return (
-    <div className="min-h-screen bg-surface">
-      {/* Header */}
-      <header className="border-b border-surface-border px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-gray-400 hover:text-white transition-colors">
-            <ArrowLeft size={20} />
-          </Link>
-          <div className="flex items-center gap-3">
-            <div className="w-7 h-7 bg-brand-500 rounded-md flex items-center justify-center">
-              <Cpu size={15} className="text-white" />
-            </div>
-            <span className="text-white font-semibold text-sm">Analysis Report</span>
+    <div style={{ padding: "28px 28px 64px" }}>
+      {/* Page header */}
+      <div style={{ marginBottom: 24 }}>
+        <Link
+          href="/"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12,
+            color: "var(--text-tertiary)",
+            textDecoration: "none",
+            marginBottom: 12,
+            transition: "color var(--transition-fast)",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLAnchorElement).style.color =
+              "var(--text-secondary)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLAnchorElement).style.color =
+              "var(--text-tertiary)";
+          }}
+        >
+          <ArrowLeft size={12} />
+          Dashboard
+        </Link>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+          }}
+        >
+          <div>
+            <h1
+              style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: "var(--text-primary)",
+                letterSpacing: "-0.02em",
+                lineHeight: 1.3,
+                marginBottom: 6,
+              }}
+            >
+              {detail.query}
+            </h1>
+            <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+              {detail.company_context.company_name} ·{" "}
+              {detail.company_context.sector} ·{" "}
+              {detail.company_context.target_market}
+            </p>
           </div>
+          <StatusBadge status={detail.status} />
         </div>
-        <StatusBadge status={detail.status} />
-      </header>
+      </div>
 
-      <main className="max-w-6xl mx-auto px-8 py-8">
-        {/* Query */}
-        <div className="mb-6">
-          <h2 className="text-xl font-bold text-white mb-1 leading-snug">{detail.query}</h2>
-          <p className="text-gray-500 text-sm">
-            {detail.company_context.company_name} · {detail.company_context.sector} ·{" "}
-            {detail.company_context.target_market}
-          </p>
-        </div>
+      {/* Main layout: 60% left + 40% right */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "60fr 40fr",
+          gap: 20,
+          alignItems: "flex-start",
+        }}
+      >
+        {/* Left: AgentTimeline */}
+        <div>
+          <AgentTimeline
+            agentRuns={detail.agent_runs}
+            status={detail.status}
+            executionTimeMs={detail.execution_time_ms}
+          />
 
-        <div className="grid grid-cols-3 gap-6">
-          {/* Left: Agent Status Panel */}
-          <div className="col-span-1">
-            <AgentStatusPanel
-              agentRuns={detail.agent_runs}
-              status={detail.status}
-              executionTimeMs={detail.execution_time_ms}
-            />
-          </div>
-
-          {/* Right: Strategic Brief */}
-          <div className="col-span-2">
-            {detail.status === "running" && !detail.strategic_brief && (
-              <div className="card flex flex-col items-center py-16">
-                <span className="w-10 h-10 border-4 border-brand-500/30 border-t-brand-500 rounded-full animate-spin mb-4" />
-                <p className="text-gray-400 text-sm">ASIS agents are working…</p>
-                <p className="text-gray-600 text-xs mt-1">This typically takes 2-4 minutes</p>
-              </div>
-            )}
-            {detail.status === "failed" && (
-              <div className="card border-red-800/50 bg-red-900/10">
-                <p className="text-red-400 font-medium mb-2">Pipeline failed</p>
-                <p className="text-gray-400 text-sm">{detail.query}</p>
-              </div>
-            )}
-            {detail.strategic_brief && (
-              <StrategyBrief
-                brief={detail.strategic_brief as StrategicBrief}
-                analysisId={detail.id}
+          {/* Running indicator */}
+          {detail.status === "running" && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: "10px 14px",
+                backgroundColor: "var(--accent-dim)",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid rgba(124,58,237,0.25)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 12,
+                color: "var(--accent)",
+              }}
+            >
+              <div
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  border: "2px solid transparent",
+                  borderTopColor: "var(--accent)",
+                  animation: "spin 0.7s linear infinite",
+                  flexShrink: 0,
+                }}
               />
-            )}
-          </div>
+              ASIS agents are working… typically 2–4 minutes
+            </div>
+          )}
         </div>
-      </main>
+
+        {/* Right: Log panel or StrategyBrief */}
+        <div>
+          <AnimatePresence mode="wait">
+            {!isComplete ? (
+              <motion.div
+                key="logs"
+                initial={fadeIn.initial}
+                animate={fadeIn.animate}
+                exit={{ opacity: 0 }}
+                transition={fadeIn.transition}
+              >
+                <LogPanel logs={logs} logsEndRef={logsEndRef} />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="brief"
+                initial={slideUp.initial}
+                animate={slideUp.animate}
+                transition={slideUp.transition}
+              >
+                <StrategyBrief
+                  brief={detail.strategic_brief as StrategicBrief}
+                  analysisId={detail.id}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "completed" ? "badge-green"
-    : status === "running" ? "badge-blue"
-    : status === "failed" ? "badge-red"
-    : "badge-gray";
-  return <span className={`badge ${cls} capitalize`}>{status}</span>;
+/* ─── Log Panel ──────────────────────────────────────────────────────────── */
+
+function LogPanel({
+  logs,
+  logsEndRef,
+}: {
+  logs: LogEntry[];
+  logsEndRef: React.RefObject<HTMLDivElement>;
+}) {
+  const levelColor: Record<LogEntry["level"], string> = {
+    info: "var(--text-secondary)",
+    error: "var(--danger)",
+    success: "var(--success)",
+  };
+
+  return (
+    <div
+      style={{
+        backgroundColor: "var(--bg-surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-lg)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 14px",
+          borderBottom: "1px solid var(--border)",
+          backgroundColor: "var(--bg-elevated)",
+        }}
+      >
+        <Terminal size={13} style={{ color: "var(--text-tertiary)" }} />
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: "var(--text-secondary)",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}
+        >
+          Pipeline Log
+        </span>
+      </div>
+      <div
+        style={{
+          padding: "12px 14px",
+          height: 320,
+          overflowY: "auto",
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          lineHeight: 1.7,
+        }}
+      >
+        {logs.length === 0 && (
+          <span style={{ color: "var(--text-tertiary)" }}>
+            Awaiting pipeline events…
+          </span>
+        )}
+        {logs.map((entry, i) => (
+          <div key={i} style={{ display: "flex", gap: 8 }}>
+            <span style={{ color: "var(--text-tertiary)", flexShrink: 0 }}>
+              {new Date(entry.ts).toISOString().slice(11, 19)}
+            </span>
+            <span style={{ color: levelColor[entry.level] }}>
+              {entry.message}
+            </span>
+          </div>
+        ))}
+        <div ref={logsEndRef} />
+      </div>
+    </div>
+  );
 }

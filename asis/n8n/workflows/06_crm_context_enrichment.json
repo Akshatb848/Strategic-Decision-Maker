@@ -1,0 +1,353 @@
+{
+  "name": "ASIS WF06 — CRM Context Enrichment (Sub-workflow)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "company_name",
+              "type": "string"
+            },
+            {
+              "name": "crm_record_id",
+              "type": "string"
+            },
+            {
+              "name": "crm_type",
+              "type": "string",
+              "description": "salesforce or hubspot"
+            },
+            {
+              "name": "tenant_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "sub-workflow-input",
+      "name": "Sub-workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "check-crm-type",
+              "leftValue": "={{ $json.crm_type }}",
+              "rightValue": "salesforce",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-crm",
+      "name": "Route CRM Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SALESFORCE_INSTANCE_URL }}/services/data/v58.0/sobjects/Account/{{ $json.crm_record_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SALESFORCE_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "salesforce-fetch",
+      "name": "Salesforce: Fetch Account",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.HUBSPOT_API_URL }}/crm/v3/objects/companies/{{ $json.crm_record_id }}?properties=name,industry,annualrevenue,numberofemployees,country,description,website",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.HUBSPOT_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "hubspot-fetch",
+      "name": "HubSpot: Fetch Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "company_name",
+              "name": "company_name",
+              "value": "={{ $json.Name || $json.crm_record_id }}",
+              "type": "string"
+            },
+            {
+              "id": "sector",
+              "name": "sector",
+              "value": "={{ $json.Industry || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "geography",
+              "name": "geography",
+              "value": "={{ $json.BillingCountry || $json.ShippingCountry || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "revenue_usd_bn",
+              "name": "revenue_usd_bn",
+              "value": "={{ ($json.AnnualRevenue || 0) / 1000000000 }}",
+              "type": "number"
+            },
+            {
+              "id": "employees",
+              "name": "employees",
+              "value": "={{ $json.NumberOfEmployees || null }}",
+              "type": "number"
+            },
+            {
+              "id": "description",
+              "name": "description",
+              "value": "={{ $json.Description || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "crm_record_id",
+              "name": "crm_record_id",
+              "value": "={{ $json.Id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "crm_source",
+              "name": "crm_source",
+              "value": "salesforce",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-salesforce",
+      "name": "Normalize Salesforce Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "company_name",
+              "name": "company_name",
+              "value": "={{ $json.properties.name || $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "sector",
+              "name": "sector",
+              "value": "={{ $json.properties.industry || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "geography",
+              "name": "geography",
+              "value": "={{ $json.properties.country || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "revenue_usd_bn",
+              "name": "revenue_usd_bn",
+              "value": "={{ parseFloat($json.properties.annualrevenue || '0') / 1000000000 }}",
+              "type": "number"
+            },
+            {
+              "id": "employees",
+              "name": "employees",
+              "value": "={{ parseInt($json.properties.numberofemployees || '0') || null }}",
+              "type": "number"
+            },
+            {
+              "id": "description",
+              "name": "description",
+              "value": "={{ $json.properties.description || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "crm_record_id",
+              "name": "crm_record_id",
+              "value": "={{ $json.id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "crm_source",
+              "name": "crm_source",
+              "value": "hubspot",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-hubspot",
+      "name": "Normalize HubSpot Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [900, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "company_context",
+              "name": "company_context",
+              "value": "={{ JSON.stringify({ company_name: $json.company_name, sector: $json.sector, geography: $json.geography, revenue_usd_bn: $json.revenue_usd_bn, employees: $json.employees, description: $json.description, crm_record_id: $json.crm_record_id, crm_source: $json.crm_source }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "build-context",
+      "name": "Build company_context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Sub-workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Route CRM Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route CRM Type": {
+      "main": [
+        [
+          {
+            "node": "Salesforce: Fetch Account",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot: Fetch Company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salesforce: Fetch Account": {
+      "main": [
+        [
+          {
+            "node": "Normalize Salesforce Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot: Fetch Company": {
+      "main": [
+        [
+          {
+            "node": "Normalize HubSpot Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Salesforce Fields": {
+      "main": [
+        [
+          {
+            "node": "Build company_context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize HubSpot Fields": {
+      "main": [
+        [
+          {
+            "node": "Build company_context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "asis-crm",
+      "name": "asis-crm"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "v3.0.0"
+}

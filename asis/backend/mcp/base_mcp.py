@@ -1,66 +1,75 @@
 """
-BaseMCP — shared retry + timeout logic for all MCP tool wrappers.
+ASIS v3.0 — BaseMCP: shared retry + timeout logic for all MCP wrappers.
+All failures return DATA_UNAVAILABLE string — never raise exceptions.
 """
-
 from __future__ import annotations
-
 import asyncio
 from typing import Any
+from asis.backend.config.logging import get_logger
+from asis.backend.config.settings import get_settings
 
-from ..config import get_logger, get_settings
-
-settings = get_settings()
 logger = get_logger(__name__)
-
-_FALLBACK_RESULT = "DATA_UNAVAILABLE: External data source could not be reached."
+_FALLBACK = "DATA_UNAVAILABLE: external data source unreachable"
 
 
 class BaseMCP:
-    """Base class providing retry, timeout, and fallback for MCP tool calls."""
+    """
+    Base class providing retry, timeout, and fallback for all MCP tool calls.
+
+    Subclasses should:
+      - Set ``source_name`` class attribute for log context.
+      - Implement public async methods that delegate to ``_call_with_retry``.
+      - Never let exceptions escape public methods.
+    """
 
     source_name: str = "base"
 
-    async def _call_with_retry(
-        self,
-        coro_fn: Any,
-        *args: Any,
-        **kwargs: Any,
-    ) -> str:
-        """
-        Execute an async coroutine function with timeout and retry.
-        On all failures, returns the fallback string instead of raising.
-        """
-        last_error: Exception | None = None
+    def __init__(self) -> None:
+        self._settings = get_settings()
+        self._timeout = self._settings.mcp_tool_timeout_seconds
+        self._retries = self._settings.mcp_retry_count
 
-        for attempt in range(settings.mcp_retry_count + 1):
+    async def _call_with_retry(self, coro_fn, *args: Any, **kwargs: Any) -> Any:
+        """
+        Execute an async coroutine function with timeout and exponential-backoff
+        retry.  On all failures, returns the DATA_UNAVAILABLE fallback string
+        instead of raising.
+
+        Parameters
+        ----------
+        coro_fn : callable
+            An async callable.  Called as ``coro_fn(*args, **kwargs)``.
+        *args, **kwargs :
+            Forwarded to *coro_fn*.
+
+        Returns
+        -------
+        Any
+            The result of *coro_fn* on success, or ``_FALLBACK`` on failure.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._retries + 1):
             try:
-                result = await asyncio.wait_for(
+                return await asyncio.wait_for(
                     coro_fn(*args, **kwargs),
-                    timeout=settings.mcp_tool_timeout_seconds,
-                )
-                return result if result else _FALLBACK_RESULT
-            except asyncio.TimeoutError as exc:
-                last_error = exc
-                logger.warning(
-                    "mcp_timeout",
-                    source=self.source_name,
-                    attempt=attempt,
-                    timeout=settings.mcp_tool_timeout_seconds,
+                    timeout=self._timeout,
                 )
             except Exception as exc:
-                last_error = exc
+                last_exc = exc
                 logger.warning(
-                    "mcp_error",
-                    source=self.source_name,
+                    "mcp_retry",
                     attempt=attempt,
                     error=str(exc),
+                    tool=self.__class__.__name__,
+                    source=self.source_name,
                 )
-            if attempt < settings.mcp_retry_count:
-                await asyncio.sleep(2**attempt)  # exponential backoff: 1s, 2s
+                if attempt < self._retries:
+                    await asyncio.sleep(2 ** attempt)  # 1 s, 2 s, …
 
         logger.error(
-            "mcp_all_retries_failed",
+            "mcp_failed",
+            tool=self.__class__.__name__,
             source=self.source_name,
-            error=str(last_error),
+            error=str(last_exc),
         )
-        return _FALLBACK_RESULT
+        return _FALLBACK

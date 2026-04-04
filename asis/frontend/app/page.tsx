@@ -2,150 +2,416 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import { listReports, type AnalysisSummary } from "@/lib/api";
 import { formatDistanceToNow } from "date-fns";
-import { BarChart3, Plus, FileText, Cpu, TrendingUp, Shield } from "lucide-react";
+import { staggerContainer, staggerItem, fadeUp } from "@/lib/animations";
+import { Card } from "@/components/ui/Card";
+import { StatusBadge } from "@/components/ui/Badge";
+import { StatusDot } from "@/components/ui/StatusDot";
+import {
+  BarChart3,
+  Plus,
+  FileText,
+  TrendingUp,
+  Shield,
+  Clock,
+  AlertCircle,
+  ChevronRight,
+} from "lucide-react";
 
 export default function DashboardPage() {
   const [analyses, setAnalyses] = useState<AnalysisSummary[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     listReports(1, 10)
-      .then((res) => setAnalyses(res.items))
+      .then((res) => {
+        setAnalyses(res.items);
+        setTotal(res.total);
+      })
       .catch(() => setError("Could not load analyses"))
       .finally(() => setLoading(false));
   }, []);
 
+  const completed = analyses.filter((a) => a.status === "completed").length;
+  const avgConf = avgScore(analyses, "confidence_score");
+  const avgDur = avgDuration(analyses);
+
+  const stats = [
+    {
+      icon: BarChart3,
+      label: "Total Analyses",
+      value: loading ? "—" : String(total),
+      sub: "all time",
+    },
+    {
+      icon: TrendingUp,
+      label: "Completed",
+      value: loading ? "—" : String(completed),
+      sub: "successfully",
+    },
+    {
+      icon: Shield,
+      label: "Avg Confidence",
+      value: loading ? "—" : avgConf,
+      sub: "out of 10",
+    },
+    {
+      icon: Clock,
+      label: "Avg Duration",
+      value: loading ? "—" : avgDur,
+      sub: "per analysis",
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-surface">
-      {/* Header */}
-      <header className="border-b border-surface-border px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center">
-            <Cpu size={18} className="text-white" />
-          </div>
-          <div>
-            <h1 className="text-white font-semibold text-sm">ASIS</h1>
-            <p className="text-gray-500 text-xs">Autonomous Strategic Intelligence System</p>
-          </div>
-        </div>
-        <Link href="/analysis/new" className="btn-primary flex items-center gap-2">
-          <Plus size={16} />
-          New Analysis
-        </Link>
-      </header>
+    <div style={{ padding: "32px 32px 64px" }}>
+      {/* Page header */}
+      <motion.div
+        initial={fadeUp.initial}
+        animate={fadeUp.animate}
+        transition={fadeUp.transition}
+        style={{ marginBottom: 28 }}
+      >
+        <h1
+          style={{
+            fontSize: 22,
+            fontWeight: 700,
+            color: "var(--text-primary)",
+            letterSpacing: "-0.02em",
+            marginBottom: 4,
+          }}
+        >
+          Strategic Intelligence Dashboard
+        </h1>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+          Board-level analysis powered by six specialised AI agents.
+        </p>
+      </motion.div>
 
-      <main className="max-w-6xl mx-auto px-8 py-10">
-        {/* Hero */}
-        <div className="mb-10">
-          <h2 className="text-3xl font-bold text-white mb-2">Strategic Intelligence Dashboard</h2>
-          <p className="text-gray-400">
-            Board-level strategic analysis powered by six specialised AI agents.
-          </p>
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-4 mb-10">
-          {[
-            { icon: BarChart3, label: "Total Analyses", value: analyses.length },
-            {
-              icon: TrendingUp,
-              label: "Completed",
-              value: analyses.filter((a) => a.status === "completed").length,
-            },
-            {
-              icon: Shield,
-              label: "Avg Confidence",
-              value: avgScore(analyses, "confidence_score"),
-            },
-          ].map(({ icon: Icon, label, value }) => (
-            <div key={label} className="card flex items-center gap-4">
-              <div className="w-10 h-10 bg-brand-900/30 rounded-lg flex items-center justify-center">
-                <Icon size={20} className="text-brand-400" />
+      {/* Stat cards */}
+      <motion.div
+        variants={staggerContainer}
+        initial="initial"
+        animate="animate"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 12,
+          marginBottom: 28,
+        }}
+      >
+        {stats.map(({ icon: Icon, label, value, sub }) => (
+          <motion.div key={label} variants={staggerItem}>
+            <Card hover padding="md">
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "var(--radius-md)",
+                    backgroundColor: "var(--accent-dim)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Icon size={16} style={{ color: "var(--accent)" }} />
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-tertiary)",
+                      marginBottom: 2,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    {label}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 22,
+                      fontWeight: 700,
+                      color: "var(--text-primary)",
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    {value}
+                  </div>
+                  <div
+                    style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
+                  >
+                    {sub}
+                  </div>
+                </div>
               </div>
-              <div>
-                <p className="text-gray-400 text-xs">{label}</p>
-                <p className="text-white font-semibold text-xl">{value}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+            </Card>
+          </motion.div>
+        ))}
+      </motion.div>
 
-        {/* Recent analyses */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-white font-semibold">Recent Analyses</h3>
-            <Link href="/reports" className="text-brand-400 text-sm hover:text-brand-300">
+      {/* Recent analyses table */}
+      <motion.div
+        initial={fadeUp.initial}
+        animate={fadeUp.animate}
+        transition={{ ...fadeUp.transition, delay: 0.15 }}
+      >
+        <Card padding="none">
+          {/* Table header */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "16px 20px",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "var(--text-primary)",
+              }}
+            >
+              Recent Analyses
+            </span>
+            <Link
+              href="/reports"
+              style={{
+                fontSize: 12,
+                color: "var(--accent)",
+                textDecoration: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: 2,
+              }}
+            >
               View all
+              <ChevronRight size={12} />
             </Link>
           </div>
 
+          {/* Table content */}
           {loading && (
-            <div className="text-center py-12 text-gray-500">Loading analyses…</div>
+            <div
+              style={{
+                padding: "48px 20px",
+                textAlign: "center",
+                color: "var(--text-tertiary)",
+                fontSize: 13,
+              }}
+            >
+              <div
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  border: "2px solid var(--border)",
+                  borderTopColor: "var(--accent)",
+                  animation: "spin 0.8s linear infinite",
+                  margin: "0 auto 12px",
+                }}
+              />
+              Loading analyses…
+            </div>
           )}
+
           {error && (
-            <div className="text-center py-12 text-red-400">{error}</div>
+            <div
+              style={{
+                padding: "48px 20px",
+                textAlign: "center",
+                color: "var(--danger)",
+                fontSize: 13,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <AlertCircle size={20} style={{ opacity: 0.7 }} />
+              {error}
+            </div>
           )}
+
           {!loading && !error && analyses.length === 0 && (
-            <div className="text-center py-12">
-              <FileText size={36} className="text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-400 mb-4">No analyses yet.</p>
-              <Link href="/analysis/new" className="btn-primary inline-flex items-center gap-2">
-                <Plus size={16} /> Start your first analysis
+            <div
+              style={{
+                padding: "64px 20px",
+                textAlign: "center",
+              }}
+            >
+              <FileText
+                size={32}
+                style={{
+                  color: "var(--text-tertiary)",
+                  margin: "0 auto 12px",
+                  display: "block",
+                }}
+              />
+              <p
+                style={{
+                  color: "var(--text-secondary)",
+                  fontSize: 13,
+                  marginBottom: 16,
+                }}
+              >
+                No analyses yet.
+              </p>
+              <Link
+                href="/analysis/new"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 16px",
+                  backgroundColor: "var(--accent)",
+                  color: "white",
+                  borderRadius: "var(--radius-md)",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  textDecoration: "none",
+                }}
+              >
+                <Plus size={14} />
+                Start your first analysis
               </Link>
             </div>
           )}
+
           {!loading && analyses.length > 0 && (
-            <div className="divide-y divide-surface-border">
-              {analyses.map((a) => (
+            <div>
+              {analyses.map((a, i) => (
                 <Link
                   key={a.id}
                   href={`/analysis/${a.id}`}
-                  className="flex items-center justify-between py-4 hover:bg-white/5 -mx-6 px-6 rounded-lg transition-colors"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "14px 20px",
+                    borderBottom:
+                      i < analyses.length - 1
+                        ? "1px solid var(--border)"
+                        : "none",
+                    textDecoration: "none",
+                    transition: "background-color var(--transition-fast)",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                      "var(--bg-elevated)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                      "transparent";
+                  }}
                 >
-                  <div className="flex-1 min-w-0 mr-4">
-                    <p className="text-white text-sm font-medium truncate">{a.query}</p>
-                    <p className="text-gray-500 text-xs mt-0.5">
-                      {formatDistanceToNow(new Date(a.created_at), { addSuffix: true })}
+                  {/* Status dot */}
+                  <div style={{ marginRight: 12, flexShrink: 0 }}>
+                    <StatusDot
+                      status={
+                        a.status === "completed"
+                          ? "done"
+                          : a.status === "running"
+                          ? "running"
+                          : a.status === "failed"
+                          ? "error"
+                          : "queued"
+                      }
+                    />
+                  </div>
+
+                  {/* Main content */}
+                  <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
+                    <p
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 500,
+                        color: "var(--text-primary)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {a.query}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-tertiary)",
+                        marginTop: 2,
+                      }}
+                    >
+                      {formatDistanceToNow(new Date(a.created_at), {
+                        addSuffix: true,
+                      })}
+                      {a.execution_time_ms != null && (
+                        <span>
+                          {" "}
+                          · {(a.execution_time_ms / 1000).toFixed(0)}s
+                        </span>
+                      )}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+
+                  {/* Right side */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      flexShrink: 0,
+                    }}
+                  >
                     {a.confidence_score != null && (
-                      <span className="text-xs text-gray-400">
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: "var(--text-tertiary)",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
                         {a.confidence_score.toFixed(1)}/10
                       </span>
                     )}
                     <StatusBadge status={a.status} />
+                    <ChevronRight
+                      size={14}
+                      style={{ color: "var(--text-tertiary)" }}
+                    />
                   </div>
                 </Link>
               ))}
             </div>
           )}
-        </div>
-      </main>
+        </Card>
+      </motion.div>
     </div>
   );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "completed"
-      ? "badge-green"
-      : status === "running"
-      ? "badge-blue"
-      : status === "failed"
-      ? "badge-red"
-      : "badge-gray";
-  return <span className={`badge ${cls}`}>{status}</span>;
 }
 
 function avgScore(
   analyses: AnalysisSummary[],
   key: "confidence_score" | "data_quality_score"
 ): string {
-  const scores = analyses.map((a) => a[key]).filter((s): s is number => s != null);
+  const scores = analyses
+    .map((a) => a[key])
+    .filter((s): s is number => s != null);
   if (!scores.length) return "—";
   return (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
+}
+
+function avgDuration(analyses: AnalysisSummary[]): string {
+  const times = analyses
+    .map((a) => a.execution_time_ms)
+    .filter((t): t is number => t != null);
+  if (!times.length) return "—";
+  const avg = times.reduce((a, b) => a + b, 0) / times.length;
+  return `${(avg / 1000).toFixed(0)}s`;
 }

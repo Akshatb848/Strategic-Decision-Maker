@@ -1,30 +1,44 @@
 """
-ASIS LangGraph StateGraph definition.
+ASIS v3.0 — LangGraph 1.0 StateGraph.
 
-Pipeline:
-  START → orchestrator → [market_intelligence, risk_assessment, competitor_analysis] (parallel)
-        → financial_reasoning → synthesis → END
+Pipeline topology
+-----------------
+START → orchestrator → (conditional fanout via Send) →
+    parallel: [market_intelligence, risk_assessment, competitor_analysis]
+    (subset chosen by query_type) →
+    financial_reasoning (when needed) →
+    synthesis → END
 
-Conditional edges from orchestrator allow skipping agents not required
-for the query type (e.g., risk-only query skips financial_reasoning).
+Conditional routing from orchestrator based on task_plan["query_type"]:
+  risk_only     → [risk_assessment]
+  financial_only → [market_intelligence, financial_reasoning]
+  competitive    → [market_intelligence, competitor_analysis]
+  full_brief / custom → [market_intelligence, risk_assessment, competitor_analysis]
+
+After parallel agents: financial_reasoning (if not financial_only already ran it),
+then synthesis.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any
 
-from langgraph.graph import END, START, StateGraph
-from langgraph.constants import Send
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
 
-from .state import AgentState
-from ..agents.orchestrator import OrchestratorAgent
-from ..agents.market_intelligence import MarketIntelligenceAgent
-from ..agents.risk_assessment import RiskAssessmentAgent
-from ..agents.financial_reasoning import FinancialReasoningAgent
-from ..agents.competitor_analysis import CompetitorAnalysisAgent
-from ..agents.synthesis import SynthesisAgent
+from asis.backend.graph.state import AgentState
+from asis.backend.agents.orchestrator import OrchestratorAgent
+from asis.backend.agents.market_intelligence import MarketIntelligenceAgent
+from asis.backend.agents.risk_assessment import RiskAssessmentAgent
+from asis.backend.agents.financial_reasoning import FinancialReasoningAgent
+from asis.backend.agents.competitor_analysis import CompetitorAnalysisAgent
+from asis.backend.agents.synthesis import SynthesisAgent
+from asis.backend.config.logging import get_logger
 
-# ── Instantiate agents (singletons for the graph lifetime) ─────────────────
+logger = get_logger(__name__)
+
+# ── Singleton agent instances ──────────────────────────────────────────────────
+
 _orchestrator = OrchestratorAgent()
 _market = MarketIntelligenceAgent()
 _risk = RiskAssessmentAgent()
@@ -32,8 +46,32 @@ _financial = FinancialReasoningAgent()
 _competitor = CompetitorAnalysisAgent()
 _synthesis = SynthesisAgent()
 
+# ── Routing configuration ──────────────────────────────────────────────────────
 
-# ── Node wrappers ──────────────────────────────────────────────────────────
+# Maps query_type → list of parallel agent node names to spawn
+_QUERY_TYPE_PARALLEL: dict[str, list[str]] = {
+    "risk_only":      ["risk_assessment"],
+    "financial_only": ["market_intelligence", "financial_reasoning"],
+    "competitive":    ["market_intelligence", "competitor_analysis"],
+    "full_brief":     ["market_intelligence", "risk_assessment", "competitor_analysis"],
+    "custom":         ["market_intelligence", "risk_assessment", "competitor_analysis"],
+    # Legacy / fallback mappings kept for compatibility
+    "full":           ["market_intelligence", "risk_assessment", "competitor_analysis"],
+    "market_entry":   ["market_intelligence", "risk_assessment", "competitor_analysis"],
+    "financial":      ["market_intelligence", "financial_reasoning"],
+}
+
+# These query types already include financial_reasoning in the parallel stage,
+# so we skip a separate sequential financial_reasoning step afterwards.
+_FINANCIAL_IN_PARALLEL: frozenset[str] = frozenset({"financial_only", "financial"})
+
+# These query types require a sequential financial_reasoning step *after* parallel.
+_NEEDS_SEQUENTIAL_FINANCIAL: frozenset[str] = frozenset({
+    "full_brief", "custom", "full", "market_entry",
+})
+
+
+# ── Node functions ─────────────────────────────────────────────────────────────
 
 async def orchestrator_node(state: AgentState) -> AgentState:
     return await _orchestrator.execute(state)
@@ -59,60 +97,70 @@ async def synthesis_node(state: AgentState) -> AgentState:
     return await _synthesis.execute(state)
 
 
-# ── Routing functions ──────────────────────────────────────────────────────
+# ── Conditional edge functions ─────────────────────────────────────────────────
 
-PARALLEL_AGENTS = {"market_intelligence", "risk_assessment", "competitor_analysis"}
-
-QueryType = Literal["full", "market_entry", "risk_only", "financial", "competitive"]
-
-_QUERY_TYPE_TO_PARALLEL: dict[str, list[str]] = {
-    "full": ["market_intelligence", "risk_assessment", "competitor_analysis"],
-    "market_entry": ["market_intelligence", "risk_assessment", "competitor_analysis"],
-    "risk_only": ["risk_assessment"],
-    "financial": ["market_intelligence"],
-    "competitive": ["competitor_analysis", "market_intelligence"],
-}
-
-_QUERY_TYPE_NEEDS_FINANCIAL: set[str] = {"full", "market_entry", "financial"}
-
-
-def route_after_orchestrator(state: AgentState) -> list[str] | str:
+def route_from_orchestrator(state: AgentState) -> list[Send]:
     """
-    After orchestrator: determine which parallel agents to spawn,
-    or go directly to synthesis if it's a simple query.
-    Uses Send() for parallel fanout.
+    Fan-out from orchestrator using Send() for parallel execution.
+    Each Send passes the full state to the target node.
     """
-    task_plan = state.get("task_plan") or {}
-    query_type: str = task_plan.get("query_type", "full")
-    parallel = _QUERY_TYPE_TO_PARALLEL.get(query_type, ["market_intelligence", "risk_assessment"])
+    task_plan: dict[str, Any] = state.get("task_plan") or {}
+    query_type: str = task_plan.get("query_type", "full_brief")
 
-    if not parallel:
-        return "synthesis"
+    parallel_nodes = _QUERY_TYPE_PARALLEL.get(
+        query_type,
+        ["market_intelligence", "risk_assessment", "competitor_analysis"],
+    )
 
-    # Return list of node names for parallel execution
-    return parallel
+    logger.info(
+        "graph_route_orchestrator",
+        query_type=query_type,
+        parallel_nodes=parallel_nodes,
+        analysis_id=state.get("analysis_id"),
+    )
+
+    return [Send(node, state) for node in parallel_nodes]
 
 
 def route_after_parallel(state: AgentState) -> str:
     """
-    After parallel agents complete: decide whether financial_reasoning is needed.
-    """
-    task_plan = state.get("task_plan") or {}
-    query_type: str = task_plan.get("query_type", "full")
-    agent_sequence: list[str] = state.get("agent_sequence") or []
+    After each parallel agent completes, decide whether to go to
+    financial_reasoning or directly to synthesis.
 
-    if "financial_reasoning" in agent_sequence or query_type in _QUERY_TYPE_NEEDS_FINANCIAL:
-        return "financial_reasoning"
+    financial_reasoning runs sequentially (once) for full_brief / custom.
+    For risk_only and competitive, skip straight to synthesis.
+    For financial_only the financial_reasoning node already ran in parallel.
+    """
+    task_plan: dict[str, Any] = state.get("task_plan") or {}
+    query_type: str = task_plan.get("query_type", "full_brief")
+
+    # If financial_reasoning is still needed and wasn't part of the parallel batch
+    if query_type in _NEEDS_SEQUENTIAL_FINANCIAL:
+        # Only route here once — if financial_model already populated, skip
+        if not state.get("financial_model"):
+            return "financial_reasoning"
     return "synthesis"
 
 
-# ── Graph construction ─────────────────────────────────────────────────────
+# ── Graph builder ──────────────────────────────────────────────────────────────
 
-def build_graph() -> StateGraph:
-    """Build and compile the ASIS StateGraph. Returns the compiled graph."""
+def build_graph(checkpointer=None):
+    """
+    Build and compile the ASIS StateGraph.
+
+    Parameters
+    ----------
+    checkpointer : optional
+        A LangGraph checkpointer instance (e.g. AsyncPostgresSaver or MemorySaver).
+        If None, the graph runs without persistence.
+
+    Returns
+    -------
+    CompiledGraph
+    """
     builder = StateGraph(AgentState)
 
-    # Add nodes
+    # Register nodes
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("market_intelligence", market_intelligence_node)
     builder.add_node("risk_assessment", risk_assessment_node)
@@ -120,25 +168,26 @@ def build_graph() -> StateGraph:
     builder.add_node("competitor_analysis", competitor_analysis_node)
     builder.add_node("synthesis", synthesis_node)
 
-    # Start → orchestrator
+    # START → orchestrator
     builder.add_edge(START, "orchestrator")
 
-    # Orchestrator → parallel agents (conditional fanout)
+    # orchestrator → parallel fanout (via Send)
     builder.add_conditional_edges(
         "orchestrator",
-        route_after_orchestrator,
-        {
-            "market_intelligence": "market_intelligence",
-            "risk_assessment": "risk_assessment",
-            "competitor_analysis": "competitor_analysis",
-            "synthesis": "synthesis",
-        },
+        route_from_orchestrator,
+        # Explicit path map — all possible target node names
+        [
+            "market_intelligence",
+            "risk_assessment",
+            "financial_reasoning",
+            "competitor_analysis",
+        ],
     )
 
-    # Each parallel agent → route to financial or synthesis
-    for parallel_agent in ["market_intelligence", "risk_assessment", "competitor_analysis"]:
+    # Each parallel agent → financial_reasoning or synthesis
+    for parallel_node in ["market_intelligence", "risk_assessment", "competitor_analysis"]:
         builder.add_conditional_edges(
-            parallel_agent,
+            parallel_node,
             route_after_parallel,
             {
                 "financial_reasoning": "financial_reasoning",
@@ -146,14 +195,57 @@ def build_graph() -> StateGraph:
             },
         )
 
-    # Financial → synthesis
+    # financial_reasoning (parallel variant) → synthesis
+    # financial_reasoning (sequential) → synthesis
     builder.add_edge("financial_reasoning", "synthesis")
 
-    # Synthesis → END
+    # synthesis → END
     builder.add_edge("synthesis", END)
 
-    return builder.compile()
+    compile_kwargs: dict[str, Any] = {}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+
+    return builder.compile(**compile_kwargs)
 
 
-# Module-level compiled graph instance
+async def get_graph_with_checkpointer(db_url: str):
+    """
+    Build and return a compiled graph backed by AsyncPostgresSaver.
+
+    The PostgresSaver is set up (schema initialised) before returning.
+    Falls back to MemorySaver if postgres is unavailable.
+
+    Parameters
+    ----------
+    db_url : str
+        asyncpg-style connection URL. Automatically converted to psycopg
+        format required by AsyncPostgresSaver.
+
+    Returns
+    -------
+    CompiledGraph
+    """
+    # Convert asyncpg URL → psycopg URL that AsyncPostgresSaver expects
+    psycopg_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        checkpointer = AsyncPostgresSaver.from_conn_string(psycopg_url)
+        await checkpointer.setup()
+        logger.info("graph_checkpointer_ready", backend="postgres")
+        return build_graph(checkpointer=checkpointer)
+    except Exception as exc:
+        logger.warning(
+            "graph_checkpointer_fallback",
+            error=str(exc),
+            backend="memory",
+        )
+        from langgraph.checkpoint.memory import MemorySaver
+
+        return build_graph(checkpointer=MemorySaver())
+
+
+# ── Module-level default graph (no checkpointer) ──────────────────────────────
 asis_graph = build_graph()

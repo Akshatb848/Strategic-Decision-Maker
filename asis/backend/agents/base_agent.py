@@ -1,186 +1,139 @@
 """
-BaseAgent — abstract base class for all ASIS specialist agents.
-
-Every agent inherits from this class and implements `run()`.
-Provides:
-- Shared Anthropic client (adaptive thinking on claude-opus-4-6)
-- Structured JSON output with up to 2 auto-retries on validation failure
-- Token usage tracking
-- Timing and error accumulation into AgentState
-- SSE event emission via optional callback in state metadata
+ASIS v3.0 — BaseAgent ABC.
+All LLM calls via LiteLLM proxy. Every run wrapped in a Langfuse trace span.
 """
-
 from __future__ import annotations
-
-import json
-import time
+import asyncio, json, time
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any, Callable, Coroutine, TypeVar
+import httpx
+from pydantic import BaseModel
+from asis.backend.config.logging import get_logger
+from asis.backend.config.settings import get_settings
+from asis.backend.graph.state import AgentState
 
-import anthropic
-from pydantic import BaseModel, ValidationError
-
-from ..config import get_logger, get_settings
-from ..graph.state import AgentState
-
-settings = get_settings()
 logger = get_logger(__name__)
-
+T = TypeVar("T", bound=BaseModel)
+_SSECallback = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
 class BaseAgent(ABC):
-    """Abstract base for all six ASIS agents."""
-
-    #: Subclasses must declare their unique name (matches DB agent_name)
-    name: str = "base_agent"
+    name: str = "base"
+    description: str = ""
 
     def __init__(self) -> None:
-        self._client = anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key.get_secret_value()
-        )
+        self._settings = get_settings()
+        self._langfuse = self._init_langfuse()
 
-    # ── Public interface ───────────────────────────────────────────────────
+    def _init_langfuse(self) -> Any:
+        if not self._settings.langfuse_enabled:
+            return None
+        try:
+            from langfuse import Langfuse
+            return Langfuse(
+                public_key=self._settings.langfuse_public_key,
+                secret_key=self._settings.langfuse_secret_key.get_secret_value(),
+                host=self._settings.langfuse_host,
+            )
+        except Exception:
+            return None
+
+    def _start_span(self, trace_id: str, metadata: dict[str, Any] | None = None) -> Any:
+        if not self._langfuse:
+            return None
+        try:
+            trace = self._langfuse.trace(id=trace_id, name=f"asis.{self.name}")
+            return trace.span(name=self.name, metadata=metadata or {})
+        except Exception:
+            return None
+
+    def _end_span(self, span: Any, tokens: int = 0, error: str | None = None) -> None:
+        if not span:
+            return
+        try:
+            if error:
+                span.update(level="ERROR", status_message=error)
+            else:
+                span.update(usage={"total_tokens": tokens})
+            span.end()
+            if self._langfuse:
+                self._langfuse.flush()
+        except Exception:
+            pass
 
     async def execute(self, state: AgentState) -> AgentState:
-        """
-        Entry point called by LangGraph.
-        Wraps run() with timing, error handling, and SSE emission.
-        """
         start_ms = int(time.time() * 1000)
-        await self._emit(state, "agent_start", {"agent": self.name})
-
+        analysis_id = state.get("analysis_id", "unknown")
+        trace_id = str(state.get("metadata", {}).get("trace_id", analysis_id))
+        span = self._start_span(trace_id, {"agent": self.name})
+        await self._emit(state, "agent_start", {"agent": self.name, "analysis_id": analysis_id})
+        logger.info("agent_start", agent=self.name, analysis_id=analysis_id)
         try:
-            state = await self.run(state)
-            duration_ms = int(time.time() * 1000) - start_ms
-            await self._emit(
-                state,
-                "agent_complete",
-                {"agent": self.name, "duration_ms": duration_ms},
-            )
+            updated = await self.run(state)
+            duration = int(time.time() * 1000) - start_ms
+            tokens = updated.get("metadata", {}).get("total_tokens", 0)
+            await self._emit(updated, "agent_complete", {"agent": self.name, "duration_ms": duration})
+            logger.info("agent_complete", agent=self.name, duration_ms=duration)
+            self._end_span(span, tokens=tokens)
+            return updated
         except Exception as exc:
-            error_msg = f"[{self.name}] {type(exc).__name__}: {exc}"
+            duration = int(time.time() * 1000) - start_ms
+            msg = f"{self.name}: {exc}"
             logger.error("agent_error", agent=self.name, error=str(exc))
-            state.setdefault("errors", []).append(error_msg)
-            await self._emit(state, "agent_error", {"agent": self.name, "error": error_msg})
-
-        return state
+            self._end_span(span, error=msg)
+            await self._emit(state, "agent_error", {"agent": self.name, "error": str(exc), "duration_ms": duration})
+            errors = list(state.get("errors", []))
+            errors.append(msg)
+            return {**state, "errors": errors}
 
     @abstractmethod
-    async def run(self, state: AgentState) -> AgentState:
-        """Agent-specific logic. Must update and return the state."""
+    async def run(self, state: AgentState) -> AgentState: ...
 
-    # ── Helpers for subclasses ─────────────────────────────────────────────
+    async def _call_llm(self, system_prompt: str, user_prompt: str, model: str | None = None, max_tokens: int | None = None, temperature: float = 0.3) -> tuple[str, int]:
+        _model = model or self._settings.claude_model
+        _max_tokens = max_tokens or self._settings.claude_max_tokens
+        async with httpx.AsyncClient(timeout=self._settings.agent_timeout_seconds) as client:
+            resp = await client.post(
+                f"{self._settings.litellm_proxy_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self._settings.litellm_master_key.get_secret_value()}", "Content-Type": "application/json"},
+                json={"model": _model, "max_tokens": _max_tokens, "temperature": temperature, "system": system_prompt, "messages": [{"role": "user", "content": user_prompt}]},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return data["choices"][0]["message"]["content"], data.get("usage", {}).get("total_tokens", 0)
 
-    async def _call_claude(
-        self,
-        system_prompt: str,
-        user_message: str,
-        *,
-        max_tokens: int | None = None,
-    ) -> tuple[str, int]:
-        """
-        Call claude-opus-4-6 with adaptive thinking and streaming.
-        Returns (raw_text, tokens_used).
-        """
-        max_tok = max_tokens or settings.claude_max_tokens
-        full_text = ""
+    async def _call_llm_json(self, system_prompt: str, user_prompt: str, schema: type[T], model: str | None = None, max_retries: int | None = None) -> tuple[T, int]:
+        retries = max_retries if max_retries is not None else self._settings.max_agent_retries
+        last_error = ""
         total_tokens = 0
-
-        async with self._client.messages.stream(
-            model=settings.claude_model,
-            max_tokens=max_tok,
-            thinking={"type": "adaptive"},
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_message}],
-        ) as stream:
-            async for text in stream.text_stream:
-                full_text += text
-            final = await stream.get_final_message()
-            total_tokens = (
-                final.usage.input_tokens + final.usage.output_tokens
-                if final.usage
-                else 0
-            )
-
-        return full_text, total_tokens
-
-    async def _call_claude_json(
-        self,
-        system_prompt: str,
-        user_message: str,
-        schema: type[BaseModel],
-        *,
-        max_tokens: int | None = None,
-        retries: int = 2,
-    ) -> tuple[BaseModel, int]:
-        """
-        Call Claude, parse the response as JSON, validate against schema.
-        Retries up to `retries` times on parse/validation failure.
-        Returns (validated_model, tokens_used).
-        """
-        last_error: Exception | None = None
-        accumulated_tokens = 0
-
         for attempt in range(retries + 1):
-            retry_note = (
-                f"\n\nIMPORTANT: Your previous attempt failed with: {last_error}. "
-                "Fix the JSON and try again."
-                if attempt > 0
-                else ""
-            )
-            text, tokens = await self._call_claude(
-                system_prompt,
-                user_message + retry_note,
-                max_tokens=max_tokens,
-            )
-            accumulated_tokens += tokens
-
+            suffix = f"\n\nFIX THIS ERROR:\n{last_error}" if attempt > 0 else ""
+            text, tokens = await self._call_llm(system_prompt, user_prompt + suffix, model=model)
+            total_tokens += tokens
+            clean = text.strip()
+            if clean.startswith("```"):
+                lines = clean.split("\n")
+                clean = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
             try:
-                # Strip markdown fences if present
-                clean = text.strip()
-                if clean.startswith("```"):
-                    clean = clean.split("```", 2)[1]
-                    if clean.startswith("json"):
-                        clean = clean[4:]
-                    clean = clean.rsplit("```", 1)[0].strip()
-
-                data = json.loads(clean)
-                model_instance = schema.model_validate(data)
-                return model_instance, accumulated_tokens
-
-            except (json.JSONDecodeError, ValidationError) as exc:
-                last_error = exc
-                logger.warning(
-                    "json_parse_retry",
-                    agent=self.name,
-                    attempt=attempt,
-                    error=str(exc),
-                )
-                if attempt == retries:
-                    raise ValueError(
-                        f"[{self.name}] JSON validation failed after {retries + 1} attempts: {exc}"
-                    ) from exc
-
-        raise RuntimeError("Unreachable")  # pragma: no cover
-
-    def _update_token_usage(self, state: AgentState, tokens: int) -> None:
-        """Accumulate token usage into state metadata."""
-        metadata = state.setdefault("metadata", {})
-        metadata.setdefault("token_usage", {})
-        metadata["token_usage"][self.name] = tokens
-        metadata["token_usage"]["total"] = sum(metadata["token_usage"].values())
-
-    async def _emit(
-        self,
-        state: AgentState,
-        event_type: str,
-        payload: dict[str, Any],
-    ) -> None:
-        """Send an SSE event via the optional callback stored in state.metadata."""
-        callback: Callable | None = (
-            state.get("metadata", {}).get("sse_callback")
-        )
-        if callback is not None:
-            try:
-                await callback(event_type, payload)
+                return schema.model_validate(json.loads(clean)), total_tokens
             except Exception as exc:
-                logger.warning("sse_emit_failed", event=event_type, error=str(exc))
+                last_error = str(exc)
+                logger.warning("llm_json_retry", agent=self.name, attempt=attempt, error=last_error)
+                if attempt < retries:
+                    await asyncio.sleep(1)
+        raise ValueError(f"{self.name}: invalid JSON after {retries + 1} attempts. {last_error}")
+
+    async def _emit(self, state: AgentState, event: str, data: dict[str, Any]) -> None:
+        cb: _SSECallback | None = state.get("metadata", {}).get("sse_callback")
+        if cb:
+            try:
+                await cb(event, data)
+            except Exception:
+                pass
+
+    def _get_tenant_id(self, state: AgentState) -> str:
+        return str(state.get("tenant_id") or state.get("metadata", {}).get("tenant_id", self._settings.default_tenant_id))
+
+    def _accumulate_tokens(self, state: AgentState, new_tokens: int) -> dict[str, Any]:
+        meta = dict(state.get("metadata", {}))
+        meta["total_tokens"] = int(meta.get("total_tokens", 0)) + new_tokens
+        return meta

@@ -1,0 +1,287 @@
+{
+  "name": "ASIS WF07 — Nightly Competitor Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 23 * * *"
+            }
+          ]
+        }
+      },
+      "id": "nightly-schedule",
+      "name": "Nightly Schedule (23:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://newsapi.org/v2/everything",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $env.COMPETITOR_MONITOR_QUERY }}"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "sortBy",
+              "value": "publishedAt"
+            },
+            {
+              "name": "pageSize",
+              "value": "50"
+            },
+            {
+              "name": "from",
+              "value": "={{ $now.minus({days: 1}).format('YYYY-MM-DD') }}"
+            },
+            {
+              "name": "apiKey",
+              "value": "={{ $env.NEWSAPI_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "fetch-news",
+      "name": "Fetch NewsAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Extract and format articles for AI scoring\nconst response = $input.first().json;\nconst articles = response.articles || [];\n\nreturn articles.slice(0, 20).map(article => ({\n  json: {\n    title: article.title || '',\n    description: article.description || '',\n    url: article.url || '',\n    source: article.source?.name || '',\n    published_at: article.publishedAt || '',\n    content_snippet: (article.content || article.description || '').substring(0, 500)\n  }\n}));"
+      },
+      "id": "extract-articles",
+      "name": "Extract Articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a competitive intelligence analyst. Score the following news article on its strategic relevance to {{ $env.ASIS_DEFAULT_COMPANY }} in the {{ $env.ASIS_DEFAULT_SECTOR }} sector.\n\nArticle Title: {{ $json.title }}\nSource: {{ $json.source }}\nPublished: {{ $json.published_at }}\nSummary: {{ $json.content_snippet }}\n\nScore from 0-10 where:\n10 = Direct competitive threat or major strategic opportunity requiring immediate attention\n7-9 = Significant market development worth including in strategic brief\n4-6 = Moderate relevance, monitor but not urgent\n0-3 = Low relevance, routine industry news\n\nRespond with JSON only:\n{\"relevance_score\": <number>, \"reasoning\": \"<1-2 sentences>\", \"action_required\": <true|false>}",
+        "options": {
+          "systemMessage": "You are a precise competitive intelligence analyst. Always respond with valid JSON only, no markdown fences.",
+          "temperature": 0
+        }
+      },
+      "id": "ai-score-relevance",
+      "name": "AI Agent: Score Relevance",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Parse AI response and attach score to article\nconst item = $input.first();\nlet score = 0;\nlet reasoning = '';\nlet actionRequired = false;\n\ntry {\n  const aiText = item.json.output || item.json.text || '{}';\n  const cleanText = aiText.replace(/```json?/g, '').replace(/```/g, '').trim();\n  const parsed = JSON.parse(cleanText);\n  score = parseFloat(parsed.relevance_score || 0);\n  reasoning = parsed.reasoning || '';\n  actionRequired = parsed.action_required || false;\n} catch (e) {\n  score = 0;\n  reasoning = 'parse_error';\n}\n\nreturn [{\n  json: {\n    ...item.json,\n    relevance_score: score,\n    reasoning: reasoning,\n    action_required: actionRequired\n  }\n}];"
+      },
+      "id": "parse-score",
+      "name": "Parse Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "score-threshold",
+              "leftValue": "={{ $json.relevance_score }}",
+              "rightValue": 7,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-high-relevance",
+      "name": "Score > 7?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASIS_API_URL }}/v1/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "=sha256={{ $crypto.hmac('sha256', JSON.stringify($json), $env.ASIS_WEBHOOK_SECRET, 'hex') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"workflow_id\": \"WF07_competitor_monitor\",\n  \"workflow_name\": \"Nightly Competitor Monitor\",\n  \"query\": \"A high-relevance news event has been detected that requires strategic analysis. Title: {{ $json.title }}. Source: {{ $json.source }}. Reasoning: {{ $json.reasoning }}. Please provide a strategic assessment of the implications for {{ $env.ASIS_DEFAULT_COMPANY }} and recommended response actions.\",\n  \"company_context\": {\n    \"company_name\": \"{{ $env.ASIS_DEFAULT_COMPANY }}\",\n    \"sector\": \"{{ $env.ASIS_DEFAULT_SECTOR }}\",\n    \"geography\": \"{{ $env.ASIS_DEFAULT_GEOGRAPHY }}\"\n  },\n  \"options\": {\n    \"query_type\": \"competitive\",\n    \"enable_rag\": true,\n    \"enable_memory\": true,\n    \"run_baseline\": false,\n    \"run_evaluation\": false\n  },\n  \"tenant_id\": \"{{ $env.ASIS_DEFAULT_TENANT }}\",\n  \"metadata\": {\n    \"trigger\": \"competitor_monitor\",\n    \"article_url\": \"{{ $json.url }}\",\n    \"relevance_score\": {{ $json.relevance_score }},\n    \"reasoning\": {{ JSON.stringify($json.reasoning) }}\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "trigger-asis",
+      "name": "Trigger ASIS Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 180]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "=competitor_monitor:{{ $now.format('YYYY-MM-DD') }}:{{ $json.url | md5 }}",
+        "keyType": "string",
+        "value": "={{ JSON.stringify({ title: $json.title, relevance_score: $json.relevance_score, reasoning: $json.reasoning, scored_at: $now.toISOString() }) }}",
+        "expire": true,
+        "ttl": 604800,
+        "additionalOptions": {}
+      },
+      "id": "cache-redis",
+      "name": "Cache in Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1560, 420],
+      "credentials": {
+        "redis": {
+          "id": "redis-credential",
+          "name": "Redis ASIS"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Nightly Schedule (23:00)": {
+      "main": [
+        [
+          {
+            "node": "Fetch NewsAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch NewsAPI": {
+      "main": [
+        [
+          {
+            "node": "Extract Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Articles": {
+      "main": [
+        [
+          {
+            "node": "AI Agent: Score Relevance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent: Score Relevance": {
+      "main": [
+        [
+          {
+            "node": "Parse Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Score": {
+      "main": [
+        [
+          {
+            "node": "Score > 7?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score > 7?": {
+      "main": [
+        [
+          {
+            "node": "Trigger ASIS Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cache in Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger ASIS Analysis": {
+      "main": [
+        [
+          {
+            "node": "Cache in Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "asis-monitor",
+      "name": "asis-monitor"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "v3.0.0"
+}

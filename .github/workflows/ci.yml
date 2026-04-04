@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install lint dependencies
+        run: |
+          pip install ruff mypy
+          pip install -r asis/backend/requirements.txt
+
+      - name: Run ruff
+        run: ruff check asis/backend/
+
+      - name: Run mypy
+        run: mypy asis/backend/ --ignore-missing-imports
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      # Use SQLite in-memory for CI — no external services needed
+      DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+      REDIS_URL: "redis://localhost:6379/0"
+      JWT_SECRET: "ci-test-secret-at-least-32-characters-long"
+      ANTHROPIC_API_KEY: "sk-ant-test-key"
+      OPENAI_API_KEY: "sk-test-key"
+      ENVIRONMENT: "testing"
+      LITELLM_PROXY_URL: "http://localhost:4000"
+      QDRANT_URL: "http://localhost:6333"
+      CELERY_BROKER_URL: "redis://localhost:6379/1"
+      CELERY_RESULT_BACKEND: "redis://localhost:6379/2"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install aiosqlite
+          pip install -r asis/backend/requirements.txt
+
+      - name: Run pytest with coverage
+        run: |
+          pytest asis/backend/tests/ \
+            --cov=asis/backend \
+            --cov-report=term-missing \
+            --cov-fail-under=80 \
+            -v
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: .coverage

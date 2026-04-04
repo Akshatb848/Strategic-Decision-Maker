@@ -1,0 +1,348 @@
+{
+  "name": "ASIS WF03 — Report Distribution",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "asis-completion",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "completion-webhook",
+      "name": "ASIS Completion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "asis-completion"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "analysis_id",
+              "name": "analysis_id",
+              "value": "={{ $json.body.analysis_id }}",
+              "type": "string"
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "value": "={{ $json.body.status }}",
+              "type": "string"
+            },
+            {
+              "id": "confidence_score",
+              "name": "confidence_score",
+              "value": "={{ $json.body.confidence_score }}",
+              "type": "number"
+            },
+            {
+              "id": "executive_summary",
+              "name": "executive_summary",
+              "value": "={{ $json.body.executive_summary }}",
+              "type": "string"
+            },
+            {
+              "id": "recommendation",
+              "name": "recommendation",
+              "value": "={{ $json.body.recommendation }}",
+              "type": "string"
+            },
+            {
+              "id": "report_url",
+              "name": "report_url",
+              "value": "={{ $json.body.report_url }}",
+              "type": "string"
+            },
+            {
+              "id": "tenant_id",
+              "name": "tenant_id",
+              "value": "={{ $json.body.tenant_id }}",
+              "type": "string"
+            },
+            {
+              "id": "distribution_channel",
+              "name": "distribution_channel",
+              "value": "={{ $env['TENANT_' + $json.body.tenant_id.toUpperCase() + '_CHANNEL'] || 'slack' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-fields",
+      "name": "Extract Report Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.distribution_channel }}",
+                    "rightValue": "slack",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "slack"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.distribution_channel }}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "email"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.distribution_channel }}",
+                    "rightValue": "teams",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "teams"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.distribution_channel }}",
+                    "rightValue": "notion",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "notion"
+            }
+          ],
+          "fallbackOutput": "extra"
+        },
+        "options": {}
+      },
+      "id": "route-channel",
+      "name": "Route by Channel",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_ASIS_CHANNEL_ID }}",
+          "mode": "id"
+        },
+        "text": ":brain: *ASIS Strategic Intelligence Report Ready*\n\n*Analysis ID:* `{{ $json.analysis_id }}`\n*Confidence Score:* {{ $json.confidence_score }}/10\n*Status:* {{ $json.status }}\n\n*Executive Summary:*\n{{ $json.executive_summary.substring(0, 600) }}...\n\n*Primary Recommendation:*\n{{ $json.recommendation }}\n\n<{{ $json.report_url }}|View Full Report>",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "slack-notify",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [900, 160],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credential",
+          "name": "Slack ASIS Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "asis@{{ $env.SENDGRID_FROM_DOMAIN }}",
+        "toEmail": "={{ $env.REPORT_EMAIL_RECIPIENT }}",
+        "subject": "ASIS Strategic Intelligence Report — {{ $json.analysis_id }}",
+        "emailType": "html",
+        "message": "<h2>ASIS Strategic Intelligence Report</h2>\n<p><strong>Analysis ID:</strong> {{ $json.analysis_id }}</p>\n<p><strong>Confidence Score:</strong> {{ $json.confidence_score }}/10</p>\n<p><strong>Status:</strong> {{ $json.status }}</p>\n<hr/>\n<h3>Executive Summary</h3>\n<p>{{ $json.executive_summary }}</p>\n<h3>Primary Recommendation</h3>\n<p>{{ $json.recommendation }}</p>\n<hr/>\n<p><a href='{{ $json.report_url }}'>View Full Report in ASIS</a></p>",
+        "options": {}
+      },
+      "id": "sendgrid-email",
+      "name": "SendGrid Email",
+      "type": "n8n-nodes-base.sendGrid",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "sendGridApi": {
+          "id": "sendgrid-credential",
+          "name": "SendGrid ASIS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TEAMS_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"@type\": \"MessageCard\",\n  \"@context\": \"http://schema.org/extensions\",\n  \"themeColor\": \"0076D7\",\n  \"summary\": \"ASIS Report Ready\",\n  \"sections\": [{\n    \"activityTitle\": \"ASIS Strategic Intelligence Report\",\n    \"activitySubtitle\": \"Analysis ID: {{ $json.analysis_id }}\",\n    \"facts\": [\n      { \"name\": \"Confidence\", \"value\": \"{{ $json.confidence_score }}/10\" },\n      { \"name\": \"Status\", \"value\": \"{{ $json.status }}\" }\n    ],\n    \"text\": \"{{ $json.executive_summary.substring(0, 400) }}...\"\n  }],\n  \"potentialAction\": [{\n    \"@type\": \"OpenUri\",\n    \"name\": \"View Full Report\",\n    \"targets\": [{\"os\": \"default\", \"uri\": \"{{ $json.report_url }}\"}]\n  }]\n}",
+        "options": {}
+      },
+      "id": "teams-notify",
+      "name": "Teams Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 440]
+    },
+    {
+      "parameters": {
+        "operation": "appendBlockChildren",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_REPORTS_PAGE_ID }}",
+          "mode": "id"
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "heading_2",
+              "textContent": "ASIS Report — {{ $json.analysis_id.substring(0, 8) }}"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "Confidence: {{ $json.confidence_score }}/10 | Status: {{ $json.status }} | {{ $now.format('YYYY-MM-DD') }}"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "{{ $json.executive_summary }}"
+            }
+          ]
+        }
+      },
+      "id": "notion-create",
+      "name": "Notion Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [900, 580],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credential",
+          "name": "Notion ASIS"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "ASIS Completion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Report Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Report Fields": {
+      "main": [
+        [
+          {
+            "node": "Route by Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Channel": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SendGrid Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Teams Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "asis-distribution",
+      "name": "asis-distribution"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "v3.0.0"
+}

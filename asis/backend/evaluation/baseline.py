@@ -1,21 +1,22 @@
 """
-SingleAgentBaseline — processes the same query with a single Claude call,
+SingleAgentBaseline v3.0 — processes the same query with a single LLM call,
 no agent decomposition. Used for dissertation comparison against the
-multi-agent ASIS pipeline.
+multi-agent ASIS pipeline (Wilcoxon signed-rank test).
+
+Model: claude_haiku_model (haiku) for cost efficiency on dissertation runs.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-import anthropic
-
-from ..config import get_logger, get_settings
-from ..db import BaselineRun
+from ...config import get_logger, get_settings
+from ...db import BaselineRun
 from .engine import EvaluationEngine
 
 settings = get_settings()
@@ -35,7 +36,8 @@ The brief must include:
 6. Competitive analysis (key competitors and market positioning)
 7. Strategic options (2-4 ranked options with pros/cons)
 8. Next steps (at least 5 specific, actionable, time-bound steps)
-9. Confidence and data quality scores (0-10 each)
+9. Confidence score (0-10)
+10. Data quality score (0-10)
 
 Cite sources for every claim. State assumptions explicitly. Do not fabricate data.
 
@@ -57,23 +59,39 @@ Output valid JSON matching this structure:
 
 
 class SingleAgentBaseline:
-    """Runs the full strategic query through a single Claude call for comparison."""
+    """
+    Runs the full strategic query through a single LiteLLM call (Haiku model).
+
+    Does NOT use the multi-agent pipeline — this is the dissertation control condition.
+    Results are scored by EvaluationEngine and stored as a BaselineRun ORM object.
+    """
 
     def __init__(self) -> None:
-        self._client = anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key.get_secret_value()
-        )
+        import litellm  # type: ignore[import]
+
+        self._litellm = litellm
+        self._model = settings.claude_haiku_model
         self._eval_engine = EvaluationEngine()
 
     async def run(
         self,
         query: str,
         company_context: dict[str, Any],
-        analysis_id: uuid.UUID,
+        tenant_id: str,
     ) -> BaselineRun:
         """
-        Execute single-agent baseline and return a populated BaselineRun ORM object
-        (not yet committed — caller must add to session and commit).
+        Execute single-agent baseline and return a populated BaselineRun ORM object.
+
+        The returned object is NOT committed to the database — the caller must
+        add it to a session and commit.
+
+        Args:
+            query: The strategic query.
+            company_context: Company context dict.
+            tenant_id: Tenant identifier (stored on the record but not used for routing).
+
+        Returns:
+            BaselineRun ORM instance (unsaved).
         """
         start_ms = int(time.time() * 1000)
 
@@ -87,46 +105,75 @@ class SingleAgentBaseline:
         tokens_used = 0
 
         try:
-            full_text = ""
-            async with self._client.messages.stream(
-                model=settings.claude_model,
+            response = await self._litellm.acompletion(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": _BASELINE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
                 max_tokens=settings.claude_max_tokens,
-                thinking={"type": "adaptive"},
-                system=_BASELINE_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            ) as stream:
-                async for text in stream.text_stream:
-                    full_text += text
-                final = await stream.get_final_message()
-                tokens_used = (
-                    final.usage.input_tokens + final.usage.output_tokens
-                    if final.usage else 0
-                )
+                temperature=0.3,
+                api_base=settings.litellm_proxy_url,
+                api_key=settings.litellm_master_key.get_secret_value(),
+            )
 
-            # Parse output
-            clean = full_text.strip()
+            raw_text = response.choices[0].message.content or ""
+            tokens_used = (
+                response.usage.total_tokens if response.usage else 0
+            )
+
+            # Parse JSON output — strip fences if present
+            clean = raw_text.strip()
             if clean.startswith("```"):
-                clean = clean.split("```", 2)[1]
-                if clean.startswith("json"):
-                    clean = clean[4:]
-                clean = clean.rsplit("```", 1)[0].strip()
+                clean = re.sub(r"^```(?:json)?\s*", "", clean)
+                clean = re.sub(r"\s*```$", "", clean).strip()
             output = json.loads(clean)
 
+        except json.JSONDecodeError as exc:
+            logger.error("baseline_json_parse_failed", error=str(exc))
+            output = {
+                "executive_summary": "Baseline run failed: JSON parse error",
+                "recommendation": "",
+                "sources": [],
+                "confidence_score": 0.0,
+                "data_quality_score": 0.0,
+            }
         except Exception as exc:
-            logger.error("baseline_run_failed", error=str(exc))
-            output = {"error": str(exc), "executive_summary": "Baseline run failed"}
+            logger.error("baseline_run_failed", model=self._model, error=str(exc))
+            output = {
+                "executive_summary": f"Baseline run failed: {exc}",
+                "recommendation": "",
+                "sources": [],
+                "confidence_score": 0.0,
+                "data_quality_score": 0.0,
+            }
 
         duration_ms = int(time.time() * 1000) - start_ms
 
-        # Evaluate
+        logger.info(
+            "baseline_run_complete",
+            model=self._model,
+            duration_ms=duration_ms,
+            tokens_used=tokens_used,
+        )
+
+        # Evaluate the baseline output using EvaluationEngine
         scores: dict[str, float] = {}
         try:
             scores = await self._eval_engine.evaluate(output, query)
         except Exception as exc:
             logger.warning("baseline_eval_failed", error=str(exc))
+            scores = {
+                "analytical_depth": 5.0,
+                "factual_accuracy": 5.0,
+                "contextual_relevance": 5.0,
+                "actionability": 5.0,
+                "internal_consistency": 5.0,
+                "overall_score": 5.0,
+            }
 
+        # Return unpersisted ORM object — caller commits
         return BaselineRun(
-            analysis_id=analysis_id,
             output=output,
             tokens_used=tokens_used,
             duration_ms=duration_ms,

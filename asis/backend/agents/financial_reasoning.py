@@ -1,64 +1,101 @@
 """
-Agent 4 — Financial Reasoning
-Quantitative financial analysis: market entry cost modelling,
-revenue projections, ROI estimation, peer benchmarking.
-Uses MCP financial data (Yahoo Finance / FMP).
-"""
+ASIS v3.0 — Financial Reasoning Agent.
+Quantitative financial analysis: market entry cost modelling, revenue projections
+(3-year, low/base/high scenarios), ROI, NPV, IRR, and peer benchmarking.
 
+Data sources (in priority order):
+  1. FinancialDataMCP (FMP API) — sector peer financial data
+  2. CRM-enriched peer_companies from company_context (passed in via n8n WF06)
+  3. Market Intelligence report already in state (market_report)
+"""
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from ..graph.state import AgentState
-from ..mcp.financial_data import FinancialDataMCP
+from asis.backend.config.logging import get_logger
+from asis.backend.graph.state import AgentState
+from asis.backend.mcp.financial_data import FinancialDataMCP
+from asis.backend.schemas.agent_outputs import FinancialModel
 from .base_agent import BaseAgent
-from .schemas import FinancialModel
+
+logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """\
-You are a VP of Corporate Finance at a leading multinational corporation,
-advising the board on a major market entry or strategic investment decision.
+You are a VP of Corporate Finance and Head of M&A at a leading global multinational corporation.
+You are advising the board on a major strategic investment decision — a market entry, acquisition,
+partnership, or expansion. Your financial model will be incorporated directly into a board-level
+strategic brief.
 
-MANDATORY REQUIREMENTS:
-1. State ALL assumptions explicitly — every number must have a stated basis.
-2. Use comparable company data where available to benchmark projections.
-3. Provide three-scenario revenue projections (low/base/high) for at least 3 years.
-4. Do NOT fabricate financial figures — if data is unavailable, state so and provide ranges.
-5. Include a disclaimer that projections are indicative.
-6. All monetary values in USD millions unless otherwise stated.
+## Your mandate
+Produce a rigorous, scenario-based financial model that quantifies the investment thesis.
+Your model must be conservative yet credible, with transparent assumptions and honest uncertainty ranges.
 
-Output valid JSON ONLY — no preamble, no markdown.
+## Mandatory requirements
+1. **Explicit assumptions**: State EVERY assumption behind each financial figure. If a number
+   cannot be substantiated from the data provided, use a credible industry benchmark and cite it.
+   Never fabricate precise figures without a stated basis.
+2. **Three-scenario revenue projections**: Provide low/base/high projections for at least 3
+   consecutive years from the point of market entry or investment execution.
+   Year numbers must be actual calendar years (e.g., 2025, 2026, 2027).
+3. **Core financial metrics**: Calculate or estimate capex, opex, ROI, NPV (at a stated discount
+   rate), IRR, and payback period. If inputs are insufficient, provide a credible range with
+   stated methodology.
+4. **Peer benchmarking**: Use provided comparable firm data to anchor projections.
+   Reference at minimum 2 comparable firms with revenue, EBITDA margin, and market cap.
+   Mark crm_data_used=true if CRM peer_companies context informed the comps.
+5. **Sensitivity**: Identify the 3-5 key variables that most influence the model outcome
+   (e.g., market penetration rate, FX rate, customer acquisition cost, regulatory delay).
+6. **CRM context**: If peer_companies or financial data appears in company_context (CRM-enriched
+   via n8n), prioritise this over generic FMP data and mark crm_data_used=true.
+7. **All amounts in USD millions** unless explicitly stated otherwise.
+8. **Investor-grade language**: Write for a CFO and institutional investor audience.
+   Be precise, calibrated, and flag risks to the base case clearly.
 
-JSON schema:
+## Market intelligence integration
+The market_report from the Market Intelligence Agent contains market size, CAGR, and trend data.
+Use these inputs to anchor your TAM/SAM penetration assumptions and growth rate projections.
+Reference market sizing in your revenue projection rationale.
+
+## Output format
+Return valid JSON ONLY — no preamble, no markdown fences.
+The JSON must exactly match the FinancialModel schema:
+
 {
-  "capex_estimate_usd_mn": number_or_null,
-  "opex_annual_usd_mn": number_or_null,
+  "company_name": "string",
+  "capex_estimate_usd_mn": number (positive float, initial capital expenditure),
+  "opex_annual_usd_mn": number (positive float, annual operating costs steady-state),
   "revenue_projections": [
-    {"year": 2025, "low_usd_mn": 0.0, "base_usd_mn": 0.0, "high_usd_mn": 0.0}
+    {"year": 2025, "low_usd_mn": 0.0, "base_usd_mn": 0.0, "high_usd_mn": 0.0},
+    {"year": 2026, "low_usd_mn": 0.0, "base_usd_mn": 0.0, "high_usd_mn": 0.0},
+    {"year": 2027, "low_usd_mn": 0.0, "base_usd_mn": 0.0, "high_usd_mn": 0.0}
   ],
-  "roi_estimate_pct": number_or_null,
-  "payback_period_years": number_or_null,
-  "npv_usd_mn": number_or_null,
-  "irr_pct": number_or_null,
+  "roi_estimate_pct": number (float, annualised ROI),
+  "payback_period_years": number (positive float),
+  "npv_usd_mn": number (float, can be negative),
+  "irr_pct": number (float, internal rate of return),
   "comparable_firms": [
     {
       "name": "string",
-      "ticker": "string_or_null",
-      "revenue_usd_mn": number_or_null,
-      "ebitda_margin_pct": number_or_null,
-      "ev_ebitda_multiple": number_or_null,
-      "notes": "string"
+      "ticker": "string (or empty string)",
+      "revenue_usd_bn": number,
+      "ebitda_margin_pct": number,
+      "market_cap_usd_bn": number,
+      "data_source": "FMP|CRM|Manual"
     }
   ],
-  "assumptions": ["assumption1", "assumption2", ...],
-  "sensitivity_factors": ["factor1", ...],
-  "data_sources": ["source1", ...],
-  "disclaimer": "string"
+  "assumptions": ["assumption 1 (min 3 items)", "assumption 2", "assumption 3"],
+  "sensitivity_notes": "string (min 50 chars — key sensitivities and scenario flags)",
+  "crm_data_used": true|false
 }
 """
 
 
 class FinancialReasoningAgent(BaseAgent):
+    """Agent 4 — Financial Reasoning. FMP peer data + CRM context + market_report integration."""
+
     name = "financial_reasoning"
+    description = "3-year financial model: capex/opex, revenue projections, ROI/NPV/IRR, peer benchmarking."
 
     def __init__(self) -> None:
         super().__init__()
@@ -68,37 +105,95 @@ class FinancialReasoningAgent(BaseAgent):
         query = state.get("query", "")
         context = state.get("company_context", {})
         task_plan = state.get("task_plan", {})
-        market_report = state.get("market_report", {})
+        market_report = state.get("market_report") or {}
 
-        # Fetch comparable company financial data
         sector = context.get("sector", "")
-        financials = await self._financial_data.get_sector_peers(sector, limit=5)
+        company_name = context.get("company_name") or context.get("name", "")
 
+        # ── Step 1: FinancialDataMCP — FMP sector peer data ────────────────────
+        fmp_peers = await self._financial_data.get_sector_peers(sector, limit=5)
+        logger.info(
+            "financial_reasoning_fmp",
+            sector=sector,
+            company=company_name,
+        )
+
+        # ── Step 2: CRM-enriched peer_companies from company_context ──────────
+        crm_peers = context.get("peer_companies", [])
+        crm_data_available = bool(crm_peers)
+        crm_section = ""
+        if crm_data_available:
+            crm_section = (
+                f"\n## CRM-Enriched Peer Companies (from n8n WF06):\n"
+                f"{json.dumps(crm_peers, indent=2)}\n"
+            )
+            logger.info(
+                "financial_reasoning_crm_peers",
+                peer_count=len(crm_peers),
+                company=company_name,
+            )
+
+        # ── Step 3: Summarise market_report inputs ─────────────────────────────
+        market_context = (
+            f"## Market Intelligence Inputs (from market_intelligence agent):\n"
+            f"  Market Name: {market_report.get('market_name', 'N/A')}\n"
+            f"  Market Size: {market_report.get('market_size_usd_bn', 'N/A')} USD bn\n"
+            f"  CAGR: {market_report.get('growth_rate_cagr_pct', 'N/A')}%\n"
+            f"  Forecast Year: {market_report.get('forecast_year', 'N/A')}\n"
+            f"  Key Trends: {', '.join(market_report.get('key_trends', [])[:3])}\n"
+        )
+
+        # ── Step 4: Build objective from TaskPlan ─────────────────────────────
+        objective = _get_objective(task_plan, self.name)
+
+        # ── Step 5: Assemble LLM prompt ───────────────────────────────────────
         user_message = (
             f"Strategic Query: {query}\n\n"
             f"Company Context:\n{json.dumps(context, indent=2)}\n\n"
-            f"Specific Objective: {_get_objective(task_plan, self.name)}\n\n"
-            f"Market Context (from Market Intelligence Agent):\n"
-            f"  Market Size: {market_report.get('market_size_usd_bn', 'N/A')} USD bn\n"
-            f"  Growth Rate: {market_report.get('growth_rate_pct', 'N/A')}% CAGR\n"
-            f"  Key Trends: {', '.join(market_report.get('key_trends', [])[:3])}\n\n"
-            f"Comparable Company Financial Data:\n{financials}\n\n"
+            f"Agent Objective: {objective}\n\n"
+            f"{market_context}\n"
+            f"## FMP Sector Peer Data:\n{fmp_peers}\n"
+            f"{crm_section}\n"
             "Produce the FinancialModel JSON now. "
-            "Provide 3-year revenue projections (Year 1, 2, 3 from entry)."
+            "Provide exactly 3 years of revenue projections with low/base/high scenarios. "
+            "Use calendar years starting from the current or next year. "
+            f"Company name is: {company_name or 'as specified in context'}. "
+            f"{'Set crm_data_used=true since CRM peer data is provided.' if crm_data_available else 'Set crm_data_used=false.'}"
         )
 
-        model, tokens = await self._call_claude_json(
-            SYSTEM_PROMPT, user_message, FinancialModel
+        # ── Step 6: LLM call ───────────────────────────────────────────────────
+        model, tokens = await self._call_llm_json(
+            SYSTEM_PROMPT,
+            user_message,
+            FinancialModel,
         )
 
-        state["financial_model"] = model.model_dump()
-        self._update_token_usage(state, tokens)
+        # ── Step 7: Update state ───────────────────────────────────────────────
+        meta = self._accumulate_tokens(state, tokens)
+        meta["crm_data_used"] = model.crm_data_used
 
-        return state
+        logger.info(
+            "financial_reasoning_complete",
+            company=model.company_name,
+            capex_usd_mn=model.capex_estimate_usd_mn,
+            npv_usd_mn=model.npv_usd_mn,
+            irr_pct=model.irr_pct,
+            comparables=len(model.comparable_firms),
+            tokens=tokens,
+        )
+
+        return {
+            **state,
+            "financial_model": model.model_dump(),
+            "metadata": meta,
+        }
 
 
-def _get_objective(task_plan: dict, agent_name: str) -> str:
+def _get_objective(task_plan: dict[str, Any], agent_name: str) -> str:
     for task in task_plan.get("subtasks", []):
         if task.get("agent") == agent_name:
             return task.get("objective", "")
-    return "Conduct quantitative financial analysis"
+    return (
+        "Build a 3-year scenario-based financial model with capex/opex estimates, "
+        "revenue projections, ROI, NPV, IRR, and comparable firm benchmarking."
+    )
