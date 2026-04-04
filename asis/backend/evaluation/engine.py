@@ -11,7 +11,7 @@ Dimensions (each 0-10):
   internal_consistency — coherence across agent outputs
   overall_score        — weighted average using settings.eval_weights
 
-Calls the LiteLLM proxy via httpx (no litellm SDK needed).
+Model: claude_haiku_model (cheap, fast) for cost-efficient dissertation runs.
 Returns neutral 5.0 scores on any failure rather than crashing.
 """
 
@@ -22,8 +22,6 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-
-import httpx
 
 from ..config import get_logger, get_settings
 from ..schemas.evaluation import DimensionScore, EvaluationResult
@@ -69,40 +67,17 @@ _NEUTRAL_SCORES: dict[str, float] = {
 _DIMENSIONS = list(_NEUTRAL_SCORES.keys())
 
 
-async def _call_proxy(
-    model: str,
-    messages: list[dict[str, str]],
-    max_tokens: int = 1000,
-    temperature: float = 0.0,
-) -> str:
-    """POST to the LiteLLM proxy and return the assistant message content."""
-    url = f"{settings.litellm_proxy_url}/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.litellm_master_key.get_secret_value()}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"] or ""
-
-
 class EvaluationEngine:
     """
-    Scores strategic brief outputs via the LiteLLM proxy (Haiku model for cost efficiency).
+    Scores strategic brief outputs using LiteLLM (Haiku model for cost efficiency).
 
-    Uses httpx directly — no litellm SDK required.
+    All evaluation calls route through the LiteLLM proxy — never directly to Anthropic.
     Returns neutral 5.0 scores on any failure rather than propagating exceptions.
     """
 
     def __init__(self) -> None:
+        import litellm  # type: ignore[import]
+        self._litellm = litellm
         self._model = settings.claude_haiku_model
 
     async def evaluate(
@@ -126,7 +101,7 @@ class EvaluationEngine:
 
         scores_raw: dict[str, Any] = {}
         try:
-            raw_text = await _call_proxy(
+            response = await self._litellm.acompletion(
                 model=self._model,
                 messages=[
                     {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
@@ -134,7 +109,10 @@ class EvaluationEngine:
                 ],
                 max_tokens=1000,
                 temperature=0.0,
+                api_base=settings.litellm_proxy_url,
+                api_key=settings.litellm_master_key.get_secret_value(),
             )
+            raw_text = response.choices[0].message.content or "{}"
             clean = _strip_fences(raw_text)
             scores_raw = json.loads(clean)
 
