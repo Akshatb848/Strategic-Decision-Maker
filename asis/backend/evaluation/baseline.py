@@ -15,8 +15,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from ...config import get_logger, get_settings
-from ...db import BaselineRun
+from ..config import get_logger, get_settings
+from ..db import BaselineRun
 from .engine import EvaluationEngine
 
 settings = get_settings()

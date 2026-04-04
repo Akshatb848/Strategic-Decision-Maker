@@ -23,8 +23,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from ...config import get_logger, get_settings
-from ...schemas.evaluation import DimensionScore, EvaluationResult
+from ..config import get_logger, get_settings
+from ..schemas.evaluation import DimensionScore, EvaluationResult
 
 settings = get_settings()
 logger = get_logger(__name__)
