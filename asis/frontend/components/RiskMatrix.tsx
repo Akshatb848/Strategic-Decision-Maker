@@ -3,92 +3,132 @@
 /**
  * RiskMatrix — visual 5×5 severity/likelihood grid.
  * Renders using inline SVG (no charting lib dependency).
+ * Colors reference CSS custom properties from the Railway dark design system.
  */
+
+const LOW_COLOR = "#22C55E";
+const MED_COLOR = "#F59E0B";
+const HIGH_COLOR = "#EF4444";
+const CRIT_COLOR = "#7f1d1d";
+
+interface Cell {
+  sx: number;
+  sy: number;
+  color: string;
+  label: string;
+}
+
+const CELLS: Cell[] = [
+  { sx: 1, sy: 1, color: LOW_COLOR, label: "Low" },
+  { sx: 2, sy: 1, color: LOW_COLOR, label: "Low" },
+  { sx: 3, sy: 1, color: MED_COLOR, label: "Med" },
+  { sx: 4, sy: 1, color: MED_COLOR, label: "Med" },
+  { sx: 5, sy: 1, color: HIGH_COLOR, label: "High" },
+  { sx: 1, sy: 2, color: LOW_COLOR, label: "Low" },
+  { sx: 2, sy: 2, color: MED_COLOR, label: "Med" },
+  { sx: 3, sy: 2, color: MED_COLOR, label: "Med" },
+  { sx: 4, sy: 2, color: HIGH_COLOR, label: "High" },
+  { sx: 5, sy: 2, color: HIGH_COLOR, label: "High" },
+  { sx: 1, sy: 3, color: MED_COLOR, label: "Med" },
+  { sx: 2, sy: 3, color: MED_COLOR, label: "Med" },
+  { sx: 3, sy: 3, color: HIGH_COLOR, label: "High" },
+  { sx: 4, sy: 3, color: HIGH_COLOR, label: "High" },
+  { sx: 5, sy: 3, color: CRIT_COLOR, label: "Crit" },
+  { sx: 1, sy: 4, color: MED_COLOR, label: "Med" },
+  { sx: 2, sy: 4, color: HIGH_COLOR, label: "High" },
+  { sx: 3, sy: 4, color: HIGH_COLOR, label: "High" },
+  { sx: 4, sy: 4, color: CRIT_COLOR, label: "Crit" },
+  { sx: 5, sy: 4, color: CRIT_COLOR, label: "Crit" },
+  { sx: 1, sy: 5, color: HIGH_COLOR, label: "High" },
+  { sx: 2, sy: 5, color: HIGH_COLOR, label: "High" },
+  { sx: 3, sy: 5, color: CRIT_COLOR, label: "Crit" },
+  { sx: 4, sy: 5, color: CRIT_COLOR, label: "Crit" },
+  { sx: 5, sy: 5, color: CRIT_COLOR, label: "Crit" },
+];
+
+const CELL_SIZE = 38;
+const AXIS_OFFSET = 40;
+const SVG_W = CELL_SIZE * 5 + AXIS_OFFSET + 12;
+const SVG_H = CELL_SIZE * 5 + AXIS_OFFSET + 16;
+
 export function RiskMatrix() {
-  const cells: Array<{ sx: number; sy: number; color: string; label: string }> = [
-    // Risk matrix quadrants (severity × likelihood, 1-indexed)
-    { sx: 1, sy: 1, color: "#16a34a", label: "Low" },
-    { sx: 2, sy: 1, color: "#16a34a", label: "Low" },
-    { sx: 3, sy: 1, color: "#ca8a04", label: "Med" },
-    { sx: 4, sy: 1, color: "#ca8a04", label: "Med" },
-    { sx: 5, sy: 1, color: "#dc2626", label: "High" },
-    { sx: 1, sy: 2, color: "#16a34a", label: "Low" },
-    { sx: 2, sy: 2, color: "#ca8a04", label: "Med" },
-    { sx: 3, sy: 2, color: "#ca8a04", label: "Med" },
-    { sx: 4, sy: 2, color: "#dc2626", label: "High" },
-    { sx: 5, sy: 2, color: "#dc2626", label: "High" },
-    { sx: 1, sy: 3, color: "#ca8a04", label: "Med" },
-    { sx: 2, sy: 3, color: "#ca8a04", label: "Med" },
-    { sx: 3, sy: 3, color: "#dc2626", label: "High" },
-    { sx: 4, sy: 3, color: "#dc2626", label: "High" },
-    { sx: 5, sy: 3, color: "#7f1d1d", label: "Crit" },
-    { sx: 1, sy: 4, color: "#ca8a04", label: "Med" },
-    { sx: 2, sy: 4, color: "#dc2626", label: "High" },
-    { sx: 3, sy: 4, color: "#dc2626", label: "High" },
-    { sx: 4, sy: 4, color: "#7f1d1d", label: "Crit" },
-    { sx: 5, sy: 4, color: "#7f1d1d", label: "Crit" },
-    { sx: 1, sy: 5, color: "#dc2626", label: "High" },
-    { sx: 2, sy: 5, color: "#dc2626", label: "High" },
-    { sx: 3, sy: 5, color: "#7f1d1d", label: "Crit" },
-    { sx: 4, sy: 5, color: "#7f1d1d", label: "Crit" },
-    { sx: 5, sy: 5, color: "#7f1d1d", label: "Crit" },
-  ];
-
-  const CELL = 40;
-  const OFFSET = 40;
-
   return (
-    <div className="mt-2">
-      <p className="text-gray-500 text-xs mb-2">Risk Matrix (Severity × Likelihood)</p>
-      <svg
-        width={CELL * 5 + OFFSET + 10}
-        height={CELL * 5 + OFFSET + 10}
-        className="text-xs"
+    <div style={{ marginTop: 8 }}>
+      <p
+        style={{
+          fontSize: 11,
+          color: "var(--text-tertiary)",
+          marginBottom: 8,
+        }}
       >
-        {/* Y axis label */}
+        Risk Matrix (Severity × Likelihood)
+      </p>
+
+      <svg
+        width={SVG_W}
+        height={SVG_H}
+        style={{ overflow: "visible" }}
+        aria-label="Risk matrix chart"
+      >
+        {/* Axis labels */}
         <text
           x={10}
-          y={(CELL * 5 + OFFSET) / 2}
+          y={(CELL_SIZE * 5 + AXIS_OFFSET) / 2}
           textAnchor="middle"
-          fill="#6b7280"
-          fontSize={10}
-          transform={`rotate(-90, 10, ${(CELL * 5 + OFFSET) / 2})`}
+          fill="var(--text-tertiary)"
+          fontSize={9}
+          transform={`rotate(-90, 10, ${(CELL_SIZE * 5 + AXIS_OFFSET) / 2})`}
+          fontFamily="var(--font-sans)"
         >
           Likelihood →
         </text>
-        {/* X axis label */}
         <text
-          x={OFFSET + (CELL * 5) / 2}
-          y={CELL * 5 + OFFSET + 8}
+          x={AXIS_OFFSET + (CELL_SIZE * 5) / 2}
+          y={CELL_SIZE * 5 + AXIS_OFFSET + 12}
           textAnchor="middle"
-          fill="#6b7280"
-          fontSize={10}
+          fill="var(--text-tertiary)"
+          fontSize={9}
+          fontFamily="var(--font-sans)"
         >
           Severity →
         </text>
 
-        {/* Grid labels */}
+        {/* Axis numbers */}
         {[1, 2, 3, 4, 5].map((v) => (
           <g key={v}>
-            <text x={OFFSET + (v - 1) * CELL + CELL / 2} y={OFFSET - 6} textAnchor="middle" fill="#4b5563" fontSize={9}>
+            <text
+              x={AXIS_OFFSET + (v - 1) * CELL_SIZE + CELL_SIZE / 2}
+              y={AXIS_OFFSET - 6}
+              textAnchor="middle"
+              fill="var(--text-tertiary)"
+              fontSize={8}
+              fontFamily="var(--font-sans)"
+            >
               {v}
             </text>
-            <text x={OFFSET - 8} y={OFFSET + (5 - v) * CELL + CELL / 2 + 4} textAnchor="middle" fill="#4b5563" fontSize={9}>
+            <text
+              x={AXIS_OFFSET - 8}
+              y={AXIS_OFFSET + (5 - v) * CELL_SIZE + CELL_SIZE / 2 + 4}
+              textAnchor="middle"
+              fill="var(--text-tertiary)"
+              fontSize={8}
+              fontFamily="var(--font-sans)"
+            >
               {v}
             </text>
           </g>
         ))}
 
         {/* Cells */}
-        {cells.map(({ sx, sy, color }) => (
+        {CELLS.map(({ sx, sy, color }) => (
           <rect
             key={`${sx}-${sy}`}
-            x={OFFSET + (sx - 1) * CELL + 1}
-            y={OFFSET + (5 - sy) * CELL + 1}
-            width={CELL - 2}
-            height={CELL - 2}
-            fill={`${color}33`}
-            stroke={`${color}66`}
+            x={AXIS_OFFSET + (sx - 1) * CELL_SIZE + 1}
+            y={AXIS_OFFSET + (5 - sy) * CELL_SIZE + 1}
+            width={CELL_SIZE - 2}
+            height={CELL_SIZE - 2}
+            fill={`${color}26`}
+            stroke={`${color}55`}
             strokeWidth={0.5}
             rx={2}
           />
@@ -96,16 +136,32 @@ export function RiskMatrix() {
       </svg>
 
       {/* Legend */}
-      <div className="flex gap-4 mt-2">
+      <div style={{ display: "flex", gap: 14, marginTop: 8, flexWrap: "wrap" }}>
         {[
-          { color: "#16a34a", label: "Low" },
-          { color: "#ca8a04", label: "Medium" },
-          { color: "#dc2626", label: "High" },
-          { color: "#7f1d1d", label: "Critical" },
+          { color: LOW_COLOR, label: "Low" },
+          { color: MED_COLOR, label: "Medium" },
+          { color: HIGH_COLOR, label: "High" },
+          { color: CRIT_COLOR, label: "Critical" },
         ].map(({ color, label }) => (
-          <div key={label} className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: `${color}66` }} />
-            <span className="text-gray-500 text-xs">{label}</span>
+          <div
+            key={label}
+            style={{ display: "flex", alignItems: "center", gap: 5 }}
+          >
+            <div
+              style={{
+                width: 11,
+                height: 11,
+                borderRadius: 2,
+                backgroundColor: `${color}55`,
+                border: `1px solid ${color}66`,
+                flexShrink: 0,
+              }}
+            />
+            <span
+              style={{ fontSize: 11, color: "var(--text-tertiary)" }}
+            >
+              {label}
+            </span>
           </div>
         ))}
       </div>

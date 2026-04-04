@@ -56,12 +56,13 @@ export function AgentTimeline({ agentRuns, status, executionTimeMs }: Props) {
 
   return (
     <Card padding="none">
-      <CardHeader
-        className=""
+      <div
         style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
           padding: "14px 16px",
           borderBottom: "1px solid var(--border)",
-          marginBottom: 0,
         }}
       >
         <CardTitle>Agent Pipeline</CardTitle>
@@ -77,7 +78,7 @@ export function AgentTimeline({ agentRuns, status, executionTimeMs }: Props) {
             {(executionTimeMs / 1000).toFixed(1)}s total
           </span>
         )}
-      </CardHeader>
+      </div>
 
       <motion.div
         variants={staggerContainer}

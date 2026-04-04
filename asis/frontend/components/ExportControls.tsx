@@ -1,7 +1,8 @@
 "use client";
 
 import type { StrategicBrief } from "@/lib/api";
-import { Download, FileText } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { FileText, Download } from "lucide-react";
 
 interface Props {
   brief: StrategicBrief;
@@ -33,21 +34,23 @@ export function ExportControls({ brief, analysisId }: Props) {
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <button
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={<FileText size={13} />}
         onClick={exportMarkdown}
-        className="btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3"
       >
-        <FileText size={13} />
         Export MD
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={<Download size={13} />}
         onClick={exportJSON}
-        className="btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3"
       >
-        <Download size={13} />
         Export JSON
-      </button>
+      </Button>
     </div>
   );
 }
@@ -68,7 +71,7 @@ function briefToMarkdown(brief: StrategicBrief, analysisId: string): string {
     `## Strategic Options`,
     ...brief.strategic_options.map(
       (o) =>
-        `### ${o.option_id}: ${o.title}${o.recommended ? " ✓ (Recommended)" : ""}\n${o.description}\n\n**Risk:** ${o.risk_level}\n\n**Pros:** ${o.pros.join(", ")}\n\n**Cons:** ${o.cons.join(", ")}`
+        `### ${o.option_id}: ${o.title}${o.recommended ? " (Recommended)" : ""}\n${o.description}\n\n**Risk:** ${o.risk_level}\n\n**Pros:** ${o.pros.join(", ")}\n\n**Cons:** ${o.cons.join(", ")}`
     ),
     ``,
     `## Risk Assessment`,
@@ -78,15 +81,16 @@ function briefToMarkdown(brief: StrategicBrief, analysisId: string): string {
     brief.financial_summary,
     ``,
     `## Next Steps`,
-    ...brief.next_steps.map(
-      (s) => `${s.priority}. **${s.action}** (${s.owner}) — ${s.timeline}`
-    ),
+    ...brief.next_steps
+      .slice()
+      .sort((a, b) => a.priority - b.priority)
+      .map((s) => `${s.priority}. **${s.action}** (${s.owner}) — ${s.timeline}`),
     ``,
     `## Sources`,
     ...brief.sources.map((s, i) => `[${i + 1}] ${s}`),
   ];
 
-  if (brief.caveats.length) {
+  if (brief.caveats.length > 0) {
     lines.push(``, `## Caveats`, ...brief.caveats.map((c) => `- ${c}`));
   }
 
