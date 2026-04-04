@@ -63,12 +63,7 @@ services:
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
     depends_on:
       - postgres
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health')\" 2>/dev/null || exit 1"]
-      interval: 20s
-      timeout: 10s
-      retries: 10
-      start_period: 40s
+    # No healthcheck — LiteLLM startup time varies; backend uses service_started
 
   # ── Observability ─────────────────────────────────────────────────────────────
 
@@ -154,7 +149,7 @@ services:
       qdrant:
         condition: service_started
       litellm:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - ./asis/backend:/app/asis/backend
     restart: always
