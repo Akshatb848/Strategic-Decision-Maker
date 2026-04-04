@@ -1,130 +1,498 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
+import { staggerContainer, staggerItem, fadeUp } from "@/lib/animations";
 import { listReports, type AnalysisSummary } from "@/lib/api";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Cpu, ChevronRight, Clock } from "lucide-react";
+import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { StatusBadge } from "@/components/ui/Badge";
+import { StatusDot } from "@/components/ui/StatusDot";
+import {
+  Search,
+  ChevronRight,
+  ChevronLeft,
+  Download,
+  Plus,
+  Clock,
+  AlertCircle,
+} from "lucide-react";
+
+type StatusFilter = "all" | "completed" | "running" | "failed" | "pending";
+
+const PAGE_SIZE = 20;
 
 export default function ReportsPage() {
   const [analyses, setAnalyses] = useState<AnalysisSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const PAGE_SIZE = 20;
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
+    setError(null);
     listReports(page, PAGE_SIZE)
       .then((res) => {
         setAnalyses(res.items);
         setTotal(res.total);
       })
+      .catch(() => setError("Could not load reports"))
       .finally(() => setLoading(false));
   }, [page]);
 
-  return (
-    <div className="min-h-screen bg-surface">
-      <header className="border-b border-surface-border px-8 py-4 flex items-center gap-4">
-        <Link href="/" className="text-gray-400 hover:text-white transition-colors">
-          <ArrowLeft size={20} />
-        </Link>
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 bg-brand-500 rounded-md flex items-center justify-center">
-            <Cpu size={15} className="text-white" />
-          </div>
-          <span className="text-white font-semibold text-sm">All Reports</span>
-        </div>
-      </header>
+  useEffect(() => {
+    load();
+  }, [load]);
 
-      <main className="max-w-4xl mx-auto px-8 py-10">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h2 className="text-2xl font-bold text-white">Strategic Reports</h2>
-            <p className="text-gray-500 text-sm mt-1">{total} analyses total</p>
-          </div>
-          <Link href="/analysis/new" className="btn-primary text-sm">
-            + New Analysis
+  const filtered = analyses.filter((a) => {
+    const matchSearch =
+      search === "" ||
+      a.query.toLowerCase().includes(search.toLowerCase());
+    const matchStatus =
+      statusFilter === "all" || a.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  const handleExport = () => {
+    const csv = [
+      ["ID", "Query", "Status", "Created", "Duration (s)", "Confidence"].join(","),
+      ...filtered.map((a) =>
+        [
+          a.id,
+          `"${a.query.replace(/"/g, '""')}"`,
+          a.status,
+          a.created_at,
+          a.execution_time_ms != null
+            ? (a.execution_time_ms / 1000).toFixed(0)
+            : "",
+          a.confidence_score != null ? a.confidence_score.toFixed(1) : "",
+        ].join(",")
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `asis-reports-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={{ padding: "32px 32px 64px" }}>
+      {/* Header */}
+      <motion.div
+        initial={fadeUp.initial}
+        animate={fadeUp.animate}
+        transition={fadeUp.transition}
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          marginBottom: 24,
+        }}
+      >
+        <div>
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: "var(--text-primary)",
+              letterSpacing: "-0.02em",
+              marginBottom: 4,
+            }}
+          >
+            Strategic Reports
+          </h1>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+            {loading ? "Loading…" : `${total} analyses total`}
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={<Download size={13} />}
+            onClick={handleExport}
+            disabled={filtered.length === 0}
+          >
+            Export CSV
+          </Button>
+          <Link href="/analysis/new">
+            <Button variant="primary" size="sm" leftIcon={<Plus size={13} />}>
+              New Analysis
+            </Button>
           </Link>
         </div>
+      </motion.div>
 
-        {loading && (
-          <div className="flex justify-center py-16">
-            <span className="w-8 h-8 border-4 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-          </div>
-        )}
+      {/* Filters */}
+      <motion.div
+        initial={fadeUp.initial}
+        animate={fadeUp.animate}
+        transition={{ ...fadeUp.transition, delay: 0.05 }}
+        style={{
+          display: "flex",
+          gap: 10,
+          marginBottom: 16,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {/* Search */}
+        <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 360 }}>
+          <Search
+            size={13}
+            style={{
+              position: "absolute",
+              left: 10,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "var(--text-tertiary)",
+              pointerEvents: "none",
+            }}
+          />
+          <input
+            type="text"
+            placeholder="Search analyses…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              width: "100%",
+              paddingLeft: 30,
+              paddingRight: 12,
+              paddingTop: 7,
+              paddingBottom: 7,
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--border)",
+              backgroundColor: "var(--bg-surface)",
+              color: "var(--text-primary)",
+              fontSize: 13,
+              outline: "none",
+            }}
+          />
+        </div>
 
-        {!loading && (
-          <div className="card divide-y divide-surface-border">
-            {analyses.length === 0 && (
-              <div className="py-12 text-center text-gray-500">No reports yet.</div>
-            )}
-            {analyses.map((a) => (
-              <Link
-                key={a.id}
-                href={`/analysis/${a.id}`}
-                className="flex items-center justify-between py-4 hover:bg-white/5 -mx-6 px-6 transition-colors"
+        {/* Status filters */}
+        <div style={{ display: "flex", gap: 4 }}>
+          {(["all", "completed", "running", "failed", "pending"] as StatusFilter[]).map(
+            (s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: "var(--radius-sm)",
+                  border:
+                    statusFilter === s
+                      ? "1px solid var(--accent)"
+                      : "1px solid var(--border)",
+                  backgroundColor:
+                    statusFilter === s
+                      ? "var(--accent-dim)"
+                      : "var(--bg-surface)",
+                  color:
+                    statusFilter === s ? "var(--accent)" : "var(--text-secondary)",
+                  fontSize: 12,
+                  fontWeight: statusFilter === s ? 600 : 400,
+                  cursor: "pointer",
+                  transition: "all var(--transition-fast)",
+                  textTransform: "capitalize",
+                }}
               >
-                <div className="flex-1 min-w-0 mr-4">
-                  <p className="text-white text-sm font-medium truncate">{a.query}</p>
-                  <div className="flex items-center gap-4 mt-1">
-                    <span className="text-gray-500 text-xs flex items-center gap-1">
-                      <Clock size={11} />
-                      {formatDistanceToNow(new Date(a.created_at), { addSuffix: true })}
-                    </span>
-                    {a.execution_time_ms && (
-                      <span className="text-gray-600 text-xs">
-                        {(a.execution_time_ms / 1000).toFixed(0)}s
-                      </span>
-                    )}
-                    {a.confidence_score != null && (
-                      <span className="text-gray-500 text-xs">
-                        Confidence: {a.confidence_score.toFixed(1)}/10
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <StatusBadge status={a.status} />
-                  <ChevronRight size={16} className="text-gray-600" />
-                </div>
-              </Link>
+                {s}
+              </button>
+            )
+          )}
+        </div>
+      </motion.div>
+
+      {/* Table */}
+      <motion.div
+        initial={fadeUp.initial}
+        animate={fadeUp.animate}
+        transition={{ ...fadeUp.transition, delay: 0.1 }}
+      >
+        <Card padding="none">
+          {/* Table header row */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 80px 80px 100px 32px",
+              gap: 0,
+              padding: "8px 20px",
+              borderBottom: "1px solid var(--border)",
+              backgroundColor: "var(--bg-elevated)",
+            }}
+          >
+            {["Query", "Status", "Duration", "Confidence", ""].map((col) => (
+              <span
+                key={col}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--text-tertiary)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                {col}
+              </span>
             ))}
           </div>
-        )}
 
-        {/* Pagination */}
-        {total > PAGE_SIZE && (
-          <div className="flex justify-center gap-2 mt-6">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="btn-secondary text-sm disabled:opacity-40"
+          {/* Loading */}
+          {loading && (
+            <div
+              style={{
+                padding: "48px 20px",
+                textAlign: "center",
+                color: "var(--text-tertiary)",
+                fontSize: 13,
+              }}
             >
-              Previous
-            </button>
-            <span className="flex items-center text-gray-500 text-sm px-2">
-              Page {page} of {Math.ceil(total / PAGE_SIZE)}
-            </span>
-            <button
-              onClick={() => setPage((p) => p + 1)}
-              disabled={page >= Math.ceil(total / PAGE_SIZE)}
-              className="btn-secondary text-sm disabled:opacity-40"
+              <div
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  border: "2px solid var(--border)",
+                  borderTopColor: "var(--accent)",
+                  animation: "spin 0.8s linear infinite",
+                  margin: "0 auto 10px",
+                }}
+              />
+              Loading reports…
+            </div>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div
+              style={{
+                padding: "48px 20px",
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 8,
+              }}
             >
-              Next
-            </button>
-          </div>
-        )}
-      </main>
+              <AlertCircle size={20} style={{ color: "var(--danger)", opacity: 0.7 }} />
+              <p style={{ fontSize: 13, color: "var(--danger)" }}>{error}</p>
+              <button
+                type="button"
+                onClick={load}
+                style={{
+                  fontSize: 12,
+                  color: "var(--accent)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Empty */}
+          {!loading && !error && filtered.length === 0 && (
+            <div
+              style={{
+                padding: "48px 20px",
+                textAlign: "center",
+                color: "var(--text-tertiary)",
+                fontSize: 13,
+              }}
+            >
+              {search || statusFilter !== "all"
+                ? "No reports match your filters."
+                : "No reports yet."}
+            </div>
+          )}
+
+          {/* Rows */}
+          {!loading && !error && filtered.length > 0 && (
+            <motion.div
+              variants={staggerContainer}
+              initial="initial"
+              animate="animate"
+            >
+              {filtered.map((a, i) => (
+                <motion.div key={a.id} variants={staggerItem}>
+                  <Link
+                    href={`/analysis/${a.id}`}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 80px 80px 100px 32px",
+                      gap: 0,
+                      padding: "12px 20px",
+                      alignItems: "center",
+                      borderBottom:
+                        i < filtered.length - 1
+                          ? "1px solid var(--border)"
+                          : "none",
+                      textDecoration: "none",
+                      transition: "background-color var(--transition-fast)",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                        "var(--bg-elevated)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                        "transparent";
+                    }}
+                  >
+                    {/* Query + meta */}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <StatusDot
+                          status={
+                            a.status === "completed"
+                              ? "done"
+                              : a.status === "running"
+                              ? "running"
+                              : a.status === "failed"
+                              ? "error"
+                              : "queued"
+                          }
+                          size={7}
+                        />
+                        <p
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 500,
+                            color: "var(--text-primary)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {a.query}
+                        </p>
+                      </div>
+                      <p
+                        style={{
+                          fontSize: 11,
+                          color: "var(--text-tertiary)",
+                          marginTop: 3,
+                          marginLeft: 15,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        <Clock size={10} />
+                        {formatDistanceToNow(new Date(a.created_at), {
+                          addSuffix: true,
+                        })}
+                      </p>
+                    </div>
+
+                    {/* Status badge */}
+                    <div>
+                      <StatusBadge status={a.status} />
+                    </div>
+
+                    {/* Duration */}
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text-tertiary)",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    >
+                      {a.execution_time_ms != null
+                        ? `${(a.execution_time_ms / 1000).toFixed(0)}s`
+                        : "—"}
+                    </span>
+
+                    {/* Confidence */}
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color:
+                          a.confidence_score != null && a.confidence_score >= 7.5
+                            ? "var(--success)"
+                            : a.confidence_score != null && a.confidence_score >= 5
+                            ? "var(--warning)"
+                            : a.confidence_score != null
+                            ? "var(--danger)"
+                            : "var(--text-tertiary)",
+                        fontFamily: "var(--font-mono)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {a.confidence_score != null
+                        ? `${a.confidence_score.toFixed(1)}/10`
+                        : "—"}
+                    </span>
+
+                    {/* Arrow */}
+                    <ChevronRight
+                      size={14}
+                      style={{ color: "var(--text-tertiary)" }}
+                    />
+                  </Link>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+        </Card>
+      </motion.div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 10,
+            marginTop: 20,
+          }}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={<ChevronLeft size={13} />}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+          >
+            Previous
+          </Button>
+          <span
+            style={{
+              fontSize: 12,
+              color: "var(--text-secondary)",
+              padding: "0 8px",
+            }}
+          >
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            rightIcon={<ChevronRight size={13} />}
+            onClick={() => setPage((p) => p + 1)}
+            disabled={page >= totalPages}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "completed" ? "badge-green"
-    : status === "running" ? "badge-blue"
-    : status === "failed" ? "badge-red"
-    : "badge-gray";
-  return <span className={`badge ${cls} capitalize`}>{status}</span>;
 }
