@@ -1,8 +1,6 @@
-# ── ASIS v3.0 — Local Development Compose ─────────────────────────────────────
-# Usage: docker-compose up --build
-# Services: backend (8000), frontend (3000), postgres (5432), redis (6379),
-#           qdrant (6333), litellm (4000), langfuse (3001), n8n (5678),
-#           celery-worker
+# ── ASIS v3.0 — Production Compose ────────────────────────────────────────────
+# Images are pre-built on GitHub Actions and pulled from GHCR.
+# VM never builds — just pulls. Run: docker compose pull && docker compose up -d
 
 services:
 
@@ -43,7 +41,6 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
-    # No healthcheck — qdrant image ships no curl/wget; use service_started in dependents
 
   # ── LLM Proxy ────────────────────────────────────────────────────────────────
 
@@ -63,7 +60,6 @@ services:
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
     depends_on:
       - postgres
-    # No healthcheck — LiteLLM startup time varies; backend uses service_started
 
   # ── Observability ─────────────────────────────────────────────────────────────
 
@@ -73,18 +69,13 @@ services:
       - "3001:3000"
     environment:
       DATABASE_URL: postgresql://asis:asis@postgres:5432/asis
-      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_URL: http://34.172.33.24:3001
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-langfuse-secret}
       SALT: ${LANGFUSE_SALT:-change-me-langfuse-salt}
       TELEMETRY_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/public/health > /dev/null 2>&1 || exit 1"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
 
   # ── Workflow Automation ───────────────────────────────────────────────────────
 
@@ -106,8 +97,8 @@ services:
       N8N_BASIC_AUTH_ACTIVE: "true"
       N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
       N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
-      WEBHOOK_URL: http://localhost:5678
-      N8N_HOST: localhost
+      WEBHOOK_URL: http://34.172.33.24:5678
+      N8N_HOST: 0.0.0.0
       N8N_PORT: 5678
       N8N_PROTOCOL: http
       GENERIC_TIMEZONE: UTC
@@ -123,9 +114,7 @@ services:
   # ── Application Services ──────────────────────────────────────────────────────
 
   backend:
-    build:
-      context: ./asis/backend
-      dockerfile: Dockerfile
+    image: ghcr.io/akshatb848/strategic-decision-maker/backend:latest
     ports:
       - "8000:8000"
     env_file:
@@ -138,9 +127,9 @@ services:
       QDRANT_URL: http://qdrant:6333
       LITELLM_PROXY_URL: http://litellm:4000
       LANGFUSE_HOST: http://langfuse:3000
-      ENVIRONMENT: development
-      LOG_LEVEL: DEBUG
-      ALLOWED_ORIGINS: "http://localhost:3000"
+      ENVIRONMENT: production
+      LOG_LEVEL: INFO
+      ALLOWED_ORIGINS: "http://34.172.33.24:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,8 +139,6 @@ services:
         condition: service_started
       litellm:
         condition: service_started
-    volumes:
-      - ./asis/backend:/app/asis/backend
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')\" 2>/dev/null || exit 1"]
@@ -161,21 +148,17 @@ services:
       start_period: 30s
 
   frontend:
-    build:
-      context: ./asis/frontend
-      dockerfile: Dockerfile
+    image: ghcr.io/akshatb848/strategic-decision-maker/frontend:latest
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_API_URL: http://34.172.33.24:8000
     depends_on:
       - backend
     restart: always
 
   celery-worker:
-    build:
-      context: ./asis/backend
-      dockerfile: Dockerfile
+    image: ghcr.io/akshatb848/strategic-decision-maker/backend:latest
     command: celery -A asis.backend.tasks.celery_app worker --loglevel=info
     env_file:
       - .env
@@ -187,7 +170,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       LITELLM_PROXY_URL: http://litellm:4000
       LANGFUSE_HOST: http://langfuse:3000
-      ENVIRONMENT: development
+      ENVIRONMENT: production
       LOG_LEVEL: INFO
     depends_on:
       postgres:
