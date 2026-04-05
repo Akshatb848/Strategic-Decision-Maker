@@ -47,6 +47,9 @@ router = APIRouter()
 settings = get_settings()
 logger = get_logger(__name__)
 
+# Single-tenant deployment: all records belong to the default tenant.
+_DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
 _AGENT_NAMES = [
     "orchestrator",
     "market_intelligence",
@@ -83,6 +86,7 @@ async def create_analysis(
     """
     # Create analysis record
     analysis = Analysis(
+        tenant_id=_DEFAULT_TENANT_ID,
         user_id=user_id,
         query=request.query,
         company_context=request.company_context.model_dump(),
@@ -95,7 +99,7 @@ async def create_analysis(
 
     # Pre-create agent run records (idle state)
     for name in _AGENT_NAMES:
-        db.add(AgentRun(analysis_id=analysis.id, agent_name=name))
+        db.add(AgentRun(analysis_id=analysis.id, agent_name=name, tenant_id=_DEFAULT_TENANT_ID))
     await db.commit()
 
     return StreamingResponse(

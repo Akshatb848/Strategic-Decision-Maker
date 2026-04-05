@@ -25,6 +25,9 @@ from ..schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 router = APIRouter(prefix="/auth", tags=["Auth"])
 settings = get_settings()
 
+# Single-tenant deployment: all users belong to the default tenant.
+_DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
@@ -40,6 +43,7 @@ async def register(
         )
 
     user = User(
+        tenant_id=_DEFAULT_TENANT_ID,
         email=body.email.lower().strip(),
         hashed_password=hash_password(body.password),
     )

@@ -171,7 +171,7 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.exception_handler(500)
+    @app.exception_handler(Exception)
     async def internal_error_handler(request: Request, exc: Any) -> JSONResponse:
         request_id = request.headers.get("X-Request-Id", "unknown")
         logger.error(
