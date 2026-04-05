@@ -113,10 +113,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ── Rate limiting (slowapi + Redis/Memorystore) ─────────────────────────────
+    # ── Rate limiting (in-memory — avoids blocking the async event loop) ─────────
     limiter = Limiter(
         key_func=get_remote_address,
-        storage_uri=settings.redis_url,
         default_limits=[f"{settings.rate_limit_per_minute}/minute"],
     )
     app.state.limiter = limiter
