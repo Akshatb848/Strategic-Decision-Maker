@@ -3,7 +3,8 @@ FROM node:20-alpine AS deps
 
 WORKDIR /app
 COPY package.json ./
-RUN npm install
+# Retry up to 5 times, increase timeout for slow connections on e2-micro
+RUN npm install --fetch-retry-mintimeout 20000 --fetch-retry-maxtimeout 120000 --fetch-retries 5
 
 # ── Stage 2: Build ────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
