@@ -8,6 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Layer 1: Heavy deps (litellm) — cached independently, rarely changes ──────
+COPY requirements-heavy.txt .
+RUN pip install --user --no-cache-dir -r requirements-heavy.txt
+
+# ── Layer 2: App deps — changes more often but installs fast ──────────────────
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
@@ -28,7 +33,6 @@ WORKDIR /app
 # Copy application code
 COPY . /app/asis/backend/
 
-# Ensure scripts are executable
 ENV PATH="/home/asis/.local/bin:$PATH" \
     PYTHONPATH="/app" \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -39,7 +43,7 @@ USER asis
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')" 2>/dev/null || exit 1
 
 CMD ["uvicorn", "asis.backend.api.main:app", \
      "--host", "0.0.0.0", \
