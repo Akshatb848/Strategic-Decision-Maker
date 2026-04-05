@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Layer 1: Heavy deps (litellm) — cached independently, rarely changes ──────
 COPY requirements-heavy.txt .
-RUN pip install --user --no-cache-dir -r requirements-heavy.txt
+RUN pip install --user --no-cache-dir --prefer-binary -r requirements-heavy.txt
 
 # ── Layer 2: App deps — changes more often but installs fast ──────────────────
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip install --user --no-cache-dir --prefer-binary -r requirements.txt
 
 # ── Stage 2: Production image ─────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime

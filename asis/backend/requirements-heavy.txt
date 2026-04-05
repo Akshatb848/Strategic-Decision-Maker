@@ -1,4 +1,3 @@
-# Heavy dependencies — installed in a separate Docker layer so they are
-# cached independently. This layer only rebuilds when litellm version changes,
-# which is rare. All other requirement changes remain fast.
-litellm>=1.50.0
+# Heavy dependencies — separate Docker layer so they are cached independently.
+# --prefer-binary ensures pip uses pre-built wheels, never compiles from source.
+litellm==1.52.9
