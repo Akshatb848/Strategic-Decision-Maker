@@ -10,6 +10,16 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+# Re-export schemas defined in the shared schemas package so route modules
+# can import everything from one place (from ..schemas import X)
+from ..schemas.api_models import (  # noqa: F401
+    N8nTriggerPayload,
+    N8nTriggerResponse,
+    N8nCompletionWebhook,
+    KnowledgeIngestRequest,
+    KnowledgeIngestResponse,
+)
+
 
 # ── Request models ────────────────────────────────────────────────────────────
 
