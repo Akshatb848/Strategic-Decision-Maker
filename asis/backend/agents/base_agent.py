@@ -81,9 +81,9 @@ class BaseAgent(ABC):
             logger.error("agent_error", agent=self.name, error=str(exc))
             self._end_span(span, error=msg)
             await self._emit(state, "agent_error", {"agent": self.name, "error": str(exc), "duration_ms": duration})
-            errors = list(state.get("errors", []))
-            errors.append(msg)
-            return {**state, "errors": errors}
+            # Return only the delta — do NOT spread full state (causes LangGraph
+            # INVALID_CONCURRENT_GRAPH_UPDATE when parallel nodes all return query/etc.)
+            return {"errors": [msg]}  # type: ignore[return-value]
 
     @abstractmethod
     async def run(self, state: AgentState) -> AgentState: ...
