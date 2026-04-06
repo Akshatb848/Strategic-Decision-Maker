@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     synthesis_model: str = "llama-3.3-70b-versatile"
 
     embedding_model: str = "BAAI/bge-large-en-v1.5"
-    claude_max_tokens: int = 8000
+    claude_max_tokens: int = 4000
 
     # Legacy Anthropic key — kept so existing .env files don't break.
     # Not used when llm_api_key is set.

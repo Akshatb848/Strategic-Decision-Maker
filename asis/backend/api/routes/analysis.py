@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -34,6 +34,7 @@ from ...db import (
     Report,
     get_db,
 )
+from ...db.session import AsyncSessionLocal
 from ...graph.asis_graph import asis_graph
 from ...graph.state import AgentState
 from ..auth import get_current_user_id
@@ -58,6 +59,11 @@ _AGENT_NAMES = [
     "competitor_analysis",
     "synthesis",
 ]
+
+# ── Module-level SSE queue registry ───────────────────────────────────────────
+# Maps analysis_id → asyncio.Queue for live event delivery.
+# Populated when graph starts; cleaned up when graph completes/fails.
+_live_queues: dict[str, asyncio.Queue[dict[str, Any] | None]] = {}
 
 
 # ── POST /analysis ─────────────────────────────────────────────────────────────
@@ -102,37 +108,13 @@ async def create_analysis(
         db.add(AgentRun(analysis_id=analysis.id, agent_name=name, tenant_id=_DEFAULT_TENANT_ID))
     await db.commit()
 
-    return StreamingResponse(
-        _stream_pipeline(analysis_id, request, user_id, db),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "X-Analysis-Id": analysis_id,
-        },
-    )
-
-
-# ── SSE streaming internals ────────────────────────────────────────────────────
-
-
-async def _stream_pipeline(
-    analysis_id: str,
-    request: CreateAnalysisRequest,
-    user_id: uuid.UUID,
-    db: AsyncSession,
-) -> AsyncGenerator[str, None]:
-    """Async generator: runs the ASIS graph and yields SSE events."""
-    sse_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-    start_time = int(time.time() * 1000)
+    # Create SSE queue and register it before starting the graph
+    sse_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    _live_queues[analysis_id] = sse_queue
 
     async def sse_callback(event_type: str, payload: dict[str, Any]) -> None:
         await sse_queue.put({"event": event_type, "data": payload})
 
-    def _format_sse(event: str, data: dict[str, Any]) -> str:
-        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-    # Build initial state — inject sse_callback into metadata so agents can emit events
     initial_state: AgentState = {
         "query": request.query,
         "company_context": request.company_context.model_dump(),
@@ -145,39 +127,103 @@ async def _stream_pipeline(
         },
     }
 
-    # Run graph in background; drain SSE queue in foreground
-    graph_task = asyncio.create_task(asis_graph.ainvoke(initial_state))
+    # Launch graph in independent background task — persists results regardless
+    # of whether the SSE connection stays open or the client navigates away.
+    start_time = int(time.time() * 1000)
+    asyncio.create_task(
+        _run_graph_and_persist(analysis_id, initial_state, sse_queue, start_time),
+        name=f"asis-graph-{analysis_id[:8]}",
+    )
 
+    return StreamingResponse(
+        _drain_sse_queue(analysis_id, sse_queue),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Analysis-Id": analysis_id,
+        },
+    )
+
+
+# ── Graph runner (independent of SSE connection) ───────────────────────────────
+
+
+async def _run_graph_and_persist(
+    analysis_id: str,
+    initial_state: AgentState,
+    sse_queue: asyncio.Queue[dict[str, Any] | None],
+    start_time: int,
+) -> None:
+    """
+    Run the ASIS graph and persist results using a FRESH DB session.
+
+    This task is independent of the SSE generator — it will complete and
+    write to the DB even if the client disconnects mid-stream.
+    """
     try:
-        while not graph_task.done() or not sse_queue.empty():
-            try:
-                event_item = sse_queue.get_nowait()
-                yield _format_sse(event_item["event"], event_item["data"])
-            except asyncio.QueueEmpty:
-                await asyncio.sleep(0.05)
-
-        # Graph finished — retrieve final state
-        final_state: AgentState = await graph_task
+        final_state: AgentState = await asis_graph.ainvoke(initial_state)
         duration_ms = int(time.time() * 1000) - start_time
 
-        # Persist results to DB
-        await _persist_results(analysis_id, final_state, duration_ms, db)
+        async with AsyncSessionLocal() as db:
+            await _persist_results(analysis_id, final_state, duration_ms, db)
 
-        # Emit final analysis_complete event with strategic_brief
-        yield _format_sse(
-            "analysis_complete",
-            {
+        # Notify any connected SSE consumers that we're done
+        await sse_queue.put({
+            "event": "analysis_complete",
+            "data": {
                 "analysis_id": analysis_id,
                 "duration_ms": duration_ms,
                 "strategic_brief": final_state.get("strategic_brief"),
                 "errors": final_state.get("errors", []),
             },
-        )
+        })
 
     except Exception as exc:
         logger.error("pipeline_error", analysis_id=analysis_id, error=str(exc))
-        await _mark_failed(analysis_id, str(exc), db)
-        yield _format_sse("error", {"analysis_id": analysis_id, "message": str(exc)})
+        async with AsyncSessionLocal() as db:
+            await _mark_failed(analysis_id, str(exc), db)
+        await sse_queue.put({
+            "event": "error",
+            "data": {"analysis_id": analysis_id, "message": str(exc)},
+        })
+
+    finally:
+        # Sentinel: tells the SSE drain loop to close the stream
+        await sse_queue.put(None)
+        _live_queues.pop(analysis_id, None)
+
+
+# ── SSE drain generator ────────────────────────────────────────────────────────
+
+
+async def _drain_sse_queue(
+    analysis_id: str,
+    queue: asyncio.Queue[dict[str, Any] | None],
+) -> AsyncGenerator[str, None]:
+    """
+    Yield SSE events from the queue. Sends a heartbeat comment every 15 s so
+    that proxies and browsers don't close idle connections during Groq backoffs.
+    """
+    def _fmt(event: str, data: dict[str, Any]) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    while True:
+        try:
+            item = await asyncio.wait_for(queue.get(), timeout=15.0)
+        except asyncio.TimeoutError:
+            # Heartbeat — keeps the connection alive during long LLM backoffs
+            yield ": heartbeat\n\n"
+            continue
+
+        if item is None:
+            # Sentinel from _run_graph_and_persist — pipeline done
+            break
+
+        yield _fmt(item["event"], item["data"])
+
+
+# ── DB helpers ─────────────────────────────────────────────────────────────────
 
 
 async def _persist_results(
@@ -188,8 +234,7 @@ async def _persist_results(
 ) -> None:
     """Persist final analysis state to the database."""
     try:
-        async with db.begin_nested():
-            # Update analysis record
+        async with db.begin():
             result = await db.execute(
                 select(Analysis).where(Analysis.id == uuid.UUID(analysis_id))
             )
@@ -199,7 +244,6 @@ async def _persist_results(
                 analysis.completed_at = datetime.now(tz=timezone.utc)
                 analysis.execution_time_ms = duration_ms
 
-            # Update per-agent run records with token usage
             metadata = state.get("metadata", {})
             token_usage = metadata.get("token_usage", {})
             for agent_name in _AGENT_NAMES:
@@ -214,15 +258,14 @@ async def _persist_results(
                     agent_run.status = AgentStatus.COMPLETED
                     agent_run.tokens_used = token_usage.get(agent_name, 0)
 
-            # Create report record from StrategicBrief
             brief = state.get("strategic_brief")
             if brief:
                 report = Report(
                     analysis_id=uuid.UUID(analysis_id),
                     strategic_brief=brief,
-                    confidence_score=brief.get("confidence_score"),
-                    data_quality_score=brief.get("data_quality_score"),
-                    sources_count=len(brief.get("sources", [])),
+                    confidence_score=brief.get("overall_confidence"),
+                    data_quality_score=brief.get("overall_confidence"),
+                    sources_count=0,
                 )
                 db.add(report)
 
@@ -233,15 +276,14 @@ async def _persist_results(
 async def _mark_failed(analysis_id: str, error_msg: str, db: AsyncSession) -> None:
     """Mark analysis as FAILED in the database."""
     try:
-        result = await db.execute(
-            select(Analysis).where(Analysis.id == uuid.UUID(analysis_id))
-        )
-        analysis = result.scalar_one_or_none()
-        if analysis:
-            analysis.status = AnalysisStatus.FAILED
-            analysis.error_message = error_msg
-            analysis.completed_at = datetime.now(tz=timezone.utc)
-        await db.commit()
+        async with db.begin():
+            result = await db.execute(
+                select(Analysis).where(Analysis.id == uuid.UUID(analysis_id))
+            )
+            analysis = result.scalar_one_or_none()
+            if analysis:
+                analysis.status = AnalysisStatus.FAILED
+                analysis.completed_at = datetime.now(tz=timezone.utc)
     except Exception as exc:
         logger.error("mark_failed_error", analysis_id=analysis_id, error=str(exc))
 
@@ -312,7 +354,7 @@ async def get_analysis(
     "/analysis/{analysis_id}/stream",
     tags=["Analysis"],
     summary="SSE stream for live analysis progress",
-    response_description="Server-Sent Events — polls DB until analysis completes",
+    response_description="Server-Sent Events — live queue then DB poll until done",
 )
 async def stream_analysis(
     analysis_id: uuid.UUID,
@@ -321,10 +363,9 @@ async def stream_analysis(
 ) -> StreamingResponse:
     """
     SSE endpoint for monitoring a previously created analysis.
-    Polls the database and emits status events until the analysis reaches
-    a terminal state (completed or failed).
+    If the graph is still running, drains the live event queue.
+    Otherwise polls the database until the analysis reaches a terminal state.
     """
-    # Verify the analysis exists and belongs to the caller
     result = await db.execute(
         select(Analysis).where(
             Analysis.id == analysis_id,
@@ -335,14 +376,22 @@ async def stream_analysis(
     if not analysis:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis not found")
 
+    aid = str(analysis_id)
+
+    # If the live queue exists (graph still running), tap into it
+    live_queue = _live_queues.get(aid)
+    if live_queue is not None:
+        return StreamingResponse(
+            _drain_sse_queue(aid, live_queue),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Otherwise fall back to DB polling
     return StreamingResponse(
-        _poll_stream(str(analysis_id), db),
+        _poll_stream(aid, db),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "X-Analysis-Id": str(analysis_id),
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -353,8 +402,8 @@ async def _poll_stream(
     """Poll DB for analysis status and stream updates via SSE."""
     terminal_states = {AnalysisStatus.COMPLETED, AnalysisStatus.FAILED}
     last_status: str | None = None
-    poll_interval = 1.0  # seconds
-    max_polls = 300  # 5 minutes max
+    poll_interval = 2.0
+    max_polls = 300  # 10 minutes max
 
     for _ in range(max_polls):
         result = await db.execute(
@@ -371,7 +420,6 @@ async def _poll_stream(
             last_status = current_status
 
         if analysis.status in terminal_states:
-            # Fetch report for final brief
             report_result = await db.execute(
                 select(Report).where(Report.analysis_id == uuid.UUID(analysis_id))
             )
@@ -384,13 +432,13 @@ async def _poll_stream(
             }
             if analysis.status == AnalysisStatus.COMPLETED and report:
                 payload["strategic_brief"] = report.strategic_brief
-                payload["confidence_score"] = report.confidence_score
             elif analysis.status == AnalysisStatus.FAILED:
-                payload["message"] = analysis.error_message or "Pipeline failed"
-
+                payload["message"] = "Pipeline failed"
             yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
             return
 
+        # Heartbeat during polling to keep connection alive
+        yield ": heartbeat\n\n"
         await asyncio.sleep(poll_interval)
 
-    yield f"event: error\ndata: {json.dumps({'analysis_id': analysis_id, 'message': 'Stream timeout — analysis still running'})}\n\n"
+    yield f"event: error\ndata: {json.dumps({'analysis_id': analysis_id, 'message': 'Stream timeout'})}\n\n"

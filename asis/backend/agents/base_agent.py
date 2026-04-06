@@ -200,7 +200,7 @@ class BaseAgent(ABC):
                     resp = await client.post(url, headers=headers, json=payload)
 
             if resp.status_code == 429:
-                wait_sec = min(20 * (2 ** attempt), 120)  # 20s, 40s, 80s, 120s
+                wait_sec = min(5 * (2 ** attempt), 60)  # 5s, 10s, 20s, 40s, 60s
                 logger.warning(
                     "llm_rate_limited",
                     agent=self.name,
