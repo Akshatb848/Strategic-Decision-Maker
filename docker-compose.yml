@@ -42,20 +42,6 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-  # ── LLM Proxy ────────────────────────────────────────────────────────────────
-
-  litellm:
-    image: ghcr.io/berriai/litellm:main-latest
-    ports:
-      - "4000:4000"
-    volumes:
-      - ./litellm_config.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
-    environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    depends_on:
-      - postgres
 
   # ── Observability ─────────────────────────────────────────────────────────────
 
@@ -132,8 +118,6 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_started
-      litellm:
         condition: service_started
     restart: always
     healthcheck:

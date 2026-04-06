@@ -91,15 +91,30 @@ class BaseAgent(ABC):
     async def _call_llm(self, system_prompt: str, user_prompt: str, model: str | None = None, max_tokens: int | None = None, temperature: float = 0.3) -> tuple[str, int]:
         _model = model or self._settings.claude_model
         _max_tokens = max_tokens or self._settings.claude_max_tokens
+        # Call Anthropic API directly — bypasses the LiteLLM proxy to save ~400 MB RAM
+        # on the 1 GB e2-micro instance. Uses the native Anthropic Messages API format.
         async with httpx.AsyncClient(timeout=self._settings.agent_timeout_seconds) as client:
             resp = await client.post(
-                f"{self._settings.litellm_proxy_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self._settings.litellm_master_key.get_secret_value()}", "Content-Type": "application/json"},
-                json={"model": _model, "max_tokens": _max_tokens, "temperature": temperature, "system": system_prompt, "messages": [{"role": "user", "content": user_prompt}]},
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": self._settings.anthropic_api_key.get_secret_value(),
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": _model,
+                    "max_tokens": _max_tokens,
+                    "temperature": temperature,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                },
             )
             resp.raise_for_status()
             data = resp.json()
-        return data["choices"][0]["message"]["content"], data.get("usage", {}).get("total_tokens", 0)
+        content: str = data["content"][0]["text"]
+        usage = data.get("usage", {})
+        total_tokens: int = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        return content, total_tokens
 
     async def _call_llm_json(self, system_prompt: str, user_prompt: str, schema: type[T], model: str | None = None, max_retries: int | None = None) -> tuple[T, int]:
         retries = max_retries if max_retries is not None else self._settings.max_agent_retries
