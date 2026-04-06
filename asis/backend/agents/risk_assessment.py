@@ -112,6 +112,7 @@ class RiskAssessmentAgent(BaseAgent):
         company_name = context.get("company_name") or context.get("name", "")
 
         # ── Step 1: Read GDELT cache from metadata (pre-loaded by n8n) ─────────
+        await self._log(state, "info", f"[RISK ASSESSMENT] Checking GDELT geopolitical intelligence cache for {geography or sector}...")
         gdelt_data = metadata.get("gdelt_cache", {})
         gdelt_context = ""
         gdelt_available = bool(gdelt_data)
@@ -122,6 +123,7 @@ class RiskAssessmentAgent(BaseAgent):
                 + json.dumps(gdelt_data, indent=2)[:3000]
                 + "\n"
             )
+            await self._log(state, "info", f"[RISK ASSESSMENT] GDELT cache hit — {len(gdelt_data)} geopolitical signals loaded")
             logger.info(
                 "risk_assessment_gdelt_hit",
                 company=company_name,
@@ -131,6 +133,7 @@ class RiskAssessmentAgent(BaseAgent):
             gdelt_context = (
                 "## GDELT Cache: Not available — using live news feeds as fallback.\n"
             )
+            await self._log(state, "info", "[RISK ASSESSMENT] No GDELT cache — falling back to live NewsAPI feed...")
             logger.info(
                 "risk_assessment_gdelt_miss",
                 company=company_name,
@@ -138,6 +141,7 @@ class RiskAssessmentAgent(BaseAgent):
             )
 
         # ── Step 2: NewsFeedMCP fallback for recent risk events ────────────────
+        await self._log(state, "info", f"[RISK ASSESSMENT] Scanning recent news for geopolitical and regulatory risk signals ({target_market or geography})...")
         news_query = (
             f"{target_market or geography} {sector} political risk regulatory sanctions "
             f"compliance 2024 2025"
@@ -145,6 +149,7 @@ class RiskAssessmentAgent(BaseAgent):
         news_results = await self._news_feed.fetch(news_query, max_results=5)
 
         # ── Step 3: Tavily for regulatory/operational risk research ────────────
+        await self._log(state, "info", f"[RISK ASSESSMENT] Querying Tavily for regulatory, operational, and cyber risk landscape ({sector})...")
         reg_query = (
             f"{target_market or geography} {sector} operational risk compliance regulations "
             f"data privacy cyber security 2024"
@@ -155,6 +160,7 @@ class RiskAssessmentAgent(BaseAgent):
         objective = _get_objective(task_plan, self.name)
 
         # ── Step 5: Assemble LLM prompt ───────────────────────────────────────
+        await self._log(state, "info", f"[RISK ASSESSMENT] Calling LLM — building risk register across 6 dimensions (geopolitical, regulatory, operational, financial, reputational, cyber)...")
         user_message = (
             f"Strategic Query: {query}\n\n"
             f"Company Context:\n{json.dumps(context, indent=2)}\n\n"
@@ -179,6 +185,7 @@ class RiskAssessmentAgent(BaseAgent):
         meta = self._accumulate_tokens(state, tokens)
         meta["gdelt_available"] = gdelt_available
 
+        await self._log(state, "info", f"[RISK ASSESSMENT] Risk register complete — {len(register.risk_items)} risks identified | Overall level: {register.overall_risk_level.upper()} | Top risks: {', '.join(register.top_risk_ids[:2])}")
         logger.info(
             "risk_assessment_complete",
             company=register.company_name,

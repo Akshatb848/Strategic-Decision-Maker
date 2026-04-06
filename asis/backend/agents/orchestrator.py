@@ -130,16 +130,16 @@ class OrchestratorAgent(BaseAgent):
         tenant_id = self._get_tenant_id(state)
 
         if not query:
-            errors = list(state.get("errors", []))
-            errors.append("orchestrator: No query provided")
-            return {**state, "errors": errors}
+            return {"errors": ["orchestrator: No query provided"]}  # type: ignore[return-value]
 
-        # ── Step 1: Query Mem0 for prior analyses on the same company ──────────
         company_name: str = (
             context.get("company_name")
             or context.get("name")
             or "unknown_company"
         )
+
+        # ── Step 1: Query Mem0 for prior analyses ─────────────────────────────
+        await self._log(state, "info", f"[ORCHESTRATOR] Searching memory context for {company_name}...")
         mem0 = get_mem0_client()
         memories = await mem0.search(
             query=query,
@@ -150,17 +150,13 @@ class OrchestratorAgent(BaseAgent):
         memory_context = mem0.format_context(memories)
         memory_hit = len(memories) > 0
 
-        logger.info(
-            "orchestrator_mem0",
-            company=company_name,
-            memory_hit=memory_hit,
-            memory_count=len(memories),
-        )
+        if memory_hit:
+            await self._log(state, "info", f"[ORCHESTRATOR] Found {len(memories)} prior memory context(s) for {company_name}")
+        logger.info("orchestrator_mem0", company=company_name, memory_hit=memory_hit, memory_count=len(memories))
 
-        # ── Step 2: Build user message (with optional memory context) ──────────
-        memory_section = (
-            f"\n\n{memory_context}\n" if memory_context else ""
-        )
+        # ── Step 2: Build user message ────────────────────────────────────────
+        await self._log(state, "info", "[ORCHESTRATOR] Framing strategic problem and routing workstreams...")
+        memory_section = f"\n\n{memory_context}\n" if memory_context else ""
         user_message = (
             f"Strategic Query: {query}\n\n"
             f"Company Context:\n{json.dumps(context, indent=2)}"
@@ -168,14 +164,12 @@ class OrchestratorAgent(BaseAgent):
             "Produce the TaskPlan execution plan JSON now."
         )
 
-        # ── Step 3: Call LLM for TaskPlan ──────────────────────────────────────
-        task_plan, tokens = await self._call_llm_json(
-            SYSTEM_PROMPT,
-            user_message,
-            TaskPlan,
-        )
+        # ── Step 3: Call LLM for TaskPlan ────────────────────────────────────
+        await self._log(state, "info", "[ORCHESTRATOR] Calling LLM — classifying query and building execution plan...")
+        task_plan, tokens = await self._call_llm_json(SYSTEM_PROMPT, user_message, TaskPlan)
+        await self._log(state, "info", f"[ORCHESTRATOR] Query type: {task_plan.query_type} | Agents: {', '.join(task_plan.agent_sequence)}")
 
-        # ── Step 4: Update state — store memory context/hit in metadata ────────
+        # ── Step 4: Update state ──────────────────────────────────────────────
         meta = self._accumulate_tokens(state, tokens)
         meta["memory_context"] = memory_context
         meta["memory_hit"] = memory_hit

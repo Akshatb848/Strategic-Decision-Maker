@@ -95,8 +95,8 @@ class Settings(BaseSettings):
         description="LiteLLM proxy master key",
     )
     # Model aliases through LiteLLM
-    claude_model: str = "claude-sonnet-4-5-20241022"
-    claude_haiku_model: str = "claude-haiku-4-5-20251001"
+    claude_model: str = "claude-3-5-sonnet-20241022"
+    claude_haiku_model: str = "claude-3-5-haiku-20241022"
     embedding_model: str = "text-embedding-3-small"
     claude_max_tokens: int = 16000
 

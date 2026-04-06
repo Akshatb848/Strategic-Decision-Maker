@@ -125,6 +125,7 @@ class CompetitorAnalysisAgent(BaseAgent):
         company_name = context.get("company_name") or context.get("name", "")
 
         # ── Step 1: n8n WF07 competitor watchlist cache ───────────────────────
+        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Loading competitor watchlist (n8n WF07 cache) for {sector} / {target_market or geography}...")
         watchlist_data = metadata.get("competitor_watchlist", {})
         watchlist_available = bool(watchlist_data)
         watchlist_section = ""
@@ -135,6 +136,7 @@ class CompetitorAnalysisAgent(BaseAgent):
                 + json.dumps(watchlist_data, indent=2)[:3000]
                 + "\n"
             )
+            await self._log(state, "info", f"[COMPETITOR ANALYSIS] Watchlist hit — {len(watchlist_data) if isinstance(watchlist_data, list) else 'dict'} competitors loaded from WF07")
             logger.info(
                 "competitor_analysis_watchlist_hit",
                 company=company_name,
@@ -144,12 +146,14 @@ class CompetitorAnalysisAgent(BaseAgent):
             watchlist_section = (
                 "## Competitor Watchlist: Not available — using web search and RAG as primary sources.\n"
             )
+            await self._log(state, "info", "[COMPETITOR ANALYSIS] No WF07 watchlist cache — using Qdrant RAG and live web search...")
             logger.info(
                 "competitor_analysis_watchlist_miss",
                 company=company_name,
             )
 
         # ── Step 2: Qdrant RAG for internal competitor intelligence ────────────
+        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Scanning Qdrant RAG for internal competitor intelligence ({sector})...")
         qdrant = get_qdrant_store()
         rag_query = (
             f"{sector} {target_market or geography} competitor analysis market leaders"
@@ -166,6 +170,7 @@ class CompetitorAnalysisAgent(BaseAgent):
             rag_context = "## Internal Competitor Intelligence (from Qdrant RAG):\n"
             for i, doc in enumerate(rag_docs, start=1):
                 rag_context += f"[RAG-{i}] (score={doc.score:.2f}) {doc.text[:500]}\n\n"
+            await self._log(state, "info", f"[COMPETITOR ANALYSIS] RAG hit — {len(rag_docs)} competitor intelligence documents retrieved")
             logger.info(
                 "competitor_analysis_rag",
                 hits=len(rag_docs),
@@ -175,6 +180,7 @@ class CompetitorAnalysisAgent(BaseAgent):
             rag_context = "## Internal Competitor Intelligence: No documents retrieved from Qdrant.\n"
 
         # ── Step 3: Tavily web search for live competitor profiles ─────────────
+        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Running Tavily web search — live competitor profiles and recent strategic moves ({target_market or geography})...")
         web_query = (
             f"top competitors {sector} {target_market or geography} market share "
             f"strategic moves 2024 2025"
@@ -191,6 +197,7 @@ class CompetitorAnalysisAgent(BaseAgent):
         objective = _get_objective(task_plan, self.name)
 
         # ── Step 5: Assemble LLM prompt ───────────────────────────────────────
+        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Calling LLM — Porter Five Forces analysis + competitor profiling + strategic white space mapping...")
         user_message = (
             f"Strategic Query: {query}\n\n"
             f"Company Context:\n{json.dumps(context, indent=2)}\n\n"
@@ -218,6 +225,7 @@ class CompetitorAnalysisAgent(BaseAgent):
         meta = self._accumulate_tokens(state, tokens)
         meta["watchlist_available"] = watchlist_available
 
+        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Analysis complete — {len(brief.top_competitors)} competitors profiled | {len(brief.strategic_white_space)} white space opportunities identified")
         logger.info(
             "competitor_analysis_complete",
             company=brief.company_name,

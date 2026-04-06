@@ -23,14 +23,27 @@ def _keep_last(a: Any, b: Any) -> Any:
 
 
 def _merge_meta(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
-    """Merge metadata dicts; accumulate token counts; preserve SSE callback from a."""
+    """Merge metadata dicts from parallel nodes.
+
+    Rules:
+      - sse_callback: always keep from a (set at pipeline start, never overwrite)
+      - token_usage:  merge sub-dicts (each agent owns its own key)
+      - total_tokens: take the max (parallel agents all started with same baseline)
+      - all other keys: b wins (last writer)
+    """
     merged = {**a, **b}
-    merged["total_tokens"] = int(a.get("total_tokens", 0)) + int(b.get("total_tokens", 0))
-    # Always preserve the SSE callback from the initial state (set by analysis route)
-    if "sse_callback" in a and "sse_callback" not in b:
+    # Preserve SSE callback — it's set once at pipeline start and must never be lost
+    if "sse_callback" in a:
         merged["sse_callback"] = a["sse_callback"]
-    elif "sse_callback" in a:
-        merged["sse_callback"] = a["sse_callback"]
+    # Merge per-agent token_usage dicts (not overwrite)
+    merged_usage = {**a.get("token_usage", {}), **b.get("token_usage", {})}
+    merged["token_usage"] = merged_usage
+    # total_tokens: parallel agents each accumulated from the same baseline (orchestrator tokens).
+    # Take the max rather than adding to avoid double-counting the baseline.
+    merged["total_tokens"] = max(
+        int(a.get("total_tokens", 0)),
+        int(b.get("total_tokens", 0)),
+    )
     return merged
 
 

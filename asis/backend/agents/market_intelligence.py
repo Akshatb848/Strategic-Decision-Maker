@@ -98,6 +98,7 @@ class MarketIntelligenceAgent(BaseAgent):
         company_name = context.get("company_name") or context.get("name", "")
 
         # ── Step 1: Qdrant RAG retrieval (internal market reports) ────────────
+        await self._log(state, "info", f"[MARKET INTELLIGENCE] Scanning internal knowledge base (Qdrant RAG) for {sector} market data...")
         qdrant = get_qdrant_store()
         rag_query = f"{target_market or sector} market size trends regulatory {geography}"
         rag_docs = await qdrant.retrieve(
@@ -131,6 +132,7 @@ class MarketIntelligenceAgent(BaseAgent):
             logger.info("market_intelligence_rag_miss", tenant_id=tenant_id)
 
         # ── Step 2: Tavily web search (gap-fill for live market data) ─────────
+        await self._log(state, "info", f"[MARKET INTELLIGENCE] Querying live web intelligence (Tavily) — {target_market or sector} market data...")
         web_query = (
             f"{target_market or sector} market size growth forecast {geography} "
             f"regulatory environment 2024 2025"
@@ -138,6 +140,7 @@ class MarketIntelligenceAgent(BaseAgent):
         web_results = await self._web_search.search(web_query, max_results=5)
 
         # ── Step 3: NewsAPI for recent industry news ───────────────────────────
+        await self._log(state, "info", "[MARKET INTELLIGENCE] Retrieving recent industry news (NewsAPI)...")
         news_query = f"{target_market or sector} {geography} industry trends 2024 2025"
         news_results = await self._news_feed.fetch(news_query, max_results=5)
 
@@ -159,6 +162,7 @@ class MarketIntelligenceAgent(BaseAgent):
         )
 
         # ── Step 6: LLM call ───────────────────────────────────────────────────
+        await self._log(state, "info", f"[MARKET INTELLIGENCE] Calling LLM — synthesising PESTLE, market sizing, trend analysis ({rag_hits} RAG docs, web + news data)...")
         report, tokens = await self._call_llm_json(
             SYSTEM_PROMPT,
             user_message,
@@ -170,13 +174,8 @@ class MarketIntelligenceAgent(BaseAgent):
         meta["rag_hits"] = rag_hits
         meta["rag_sources"] = rag_sources_meta
 
-        logger.info(
-            "market_intelligence_complete",
-            market=report.market_name,
-            market_size_usd_bn=report.market_size_usd_bn,
-            rag_hits=rag_hits,
-            tokens=tokens,
-        )
+        await self._log(state, "info", f"[MARKET INTELLIGENCE] Market: {report.market_name} | Size: ${report.market_size_usd_bn}B | CAGR: {report.growth_rate_cagr_pct}% | {len(report.key_trends)} trends identified")
+        logger.info("market_intelligence_complete", market=report.market_name, market_size_usd_bn=report.market_size_usd_bn, rag_hits=rag_hits, tokens=tokens)
 
         return {
             **state,

@@ -158,6 +158,7 @@ class SynthesisAgent(BaseAgent):
         competitor_brief = state.get("competitor_brief")
 
         # ── Step 1: Query Mem0 for prior recommendations to same firm ──────────
+        await self._log(state, "info", f"[SYNTHESIS] Querying Mem0 for prior ASIS recommendations to {company_name}...")
         mem0 = get_mem0_client()
         prior_memories = await mem0.search(
             query=f"strategic recommendation {company_name} {query[:100]}",
@@ -168,6 +169,8 @@ class SynthesisAgent(BaseAgent):
         prior_context = mem0.format_context(prior_memories)
         prior_memory_hit = len(prior_memories) > 0
 
+        if prior_memory_hit:
+            await self._log(state, "info", f"[SYNTHESIS] Found {len(prior_memories)} prior recommendation(s) in Mem0 — will compute delta vs previous analysis")
         logger.info(
             "synthesis_mem0_query",
             company=company_name,
@@ -176,6 +179,7 @@ class SynthesisAgent(BaseAgent):
         )
 
         # ── Step 2: Aggregate sources from all specialist agents ───────────────
+        await self._log(state, "info", f"[SYNTHESIS] Aggregating specialist outputs — Market: {'✓' if market_report else '✗'} | Risk: {'✓' if risk_register else '✗'} | Financial: {'✓' if financial_model else '✗'} | Competitor: {'✓' if competitor_brief else '✗'}")
         all_sources: list[str] = []
         agents_contributed: list[str] = []
 
@@ -244,6 +248,7 @@ class SynthesisAgent(BaseAgent):
         )
 
         # ── Step 6: LLM call ───────────────────────────────────────────────────
+        await self._log(state, "info", f"[SYNTHESIS] Calling LLM — integrating {len(agents_contributed)-1} specialist reports into board-ready strategic brief ({sources_count} sources, {total_tokens:,} tokens consumed so far)...")
         brief, tokens = await self._call_llm_json(
             SYSTEM_PROMPT,
             user_message,
@@ -254,6 +259,9 @@ class SynthesisAgent(BaseAgent):
         final_tokens = total_tokens + tokens
         meta = self._accumulate_tokens(state, tokens)
 
+        await self._log(state, "info", f"[SYNTHESIS] Strategic brief complete — Recommendation: {brief.recommendation[:100]}...")
+        await self._log(state, "info", f"[SYNTHESIS] Confidence: {brief.confidence_score}/10 | Data quality: {brief.data_quality_score}/10 | {len(brief.strategic_options)} strategic options | {len(brief.next_steps)} next steps")
+        await self._log(state, "info", f"[SYNTHESIS] Storing analysis to Mem0 memory for future cross-session continuity...")
         logger.info(
             "synthesis_complete",
             company=brief.company_name,
