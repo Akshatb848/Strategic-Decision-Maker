@@ -250,23 +250,29 @@ async def _persist_results(
     db: AsyncSession,
 ) -> None:
     """Persist final analysis state to the database."""
+    aid = uuid.UUID(analysis_id)
+
+    # ── Step 1: mark analysis COMPLETED (own transaction) ─────────────────────
     try:
         async with db.begin():
-            result = await db.execute(
-                select(Analysis).where(Analysis.id == uuid.UUID(analysis_id))
-            )
+            result = await db.execute(select(Analysis).where(Analysis.id == aid))
             analysis = result.scalar_one_or_none()
             if analysis:
                 analysis.status = AnalysisStatus.COMPLETED
                 analysis.completed_at = datetime.now(tz=timezone.utc)
                 analysis.execution_time_ms = duration_ms
+    except Exception as exc:
+        logger.error("persist_analysis_status_error", analysis_id=analysis_id, error=str(exc))
 
+    # ── Step 2: update per-agent token counts (own transaction) ───────────────
+    try:
+        async with db.begin():
             metadata = state.get("metadata", {})
             token_usage = metadata.get("token_usage", {})
             for agent_name in _AGENT_NAMES:
                 run_result = await db.execute(
                     select(AgentRun).where(
-                        AgentRun.analysis_id == uuid.UUID(analysis_id),
+                        AgentRun.analysis_id == aid,
                         AgentRun.agent_name == agent_name,
                     )
                 )
@@ -274,18 +280,23 @@ async def _persist_results(
                 if agent_run:
                     agent_run.status = AgentStatus.COMPLETED
                     agent_run.tokens_used = token_usage.get(agent_name, 0)
+    except Exception as exc:
+        logger.error("persist_agent_runs_error", analysis_id=analysis_id, error=str(exc))
 
-            brief = state.get("strategic_brief")
-            if brief:
+    # ── Step 3: create report record (own transaction) ────────────────────────
+    try:
+        brief = state.get("strategic_brief")
+        if brief:
+            async with db.begin():
                 report = Report(
-                    analysis_id=uuid.UUID(analysis_id),
+                    analysis_id=aid,
+                    tenant_id=_DEFAULT_TENANT_ID,
                     strategic_brief=brief,
                     confidence_score=brief.get("overall_confidence"),
                     data_quality_score=brief.get("overall_confidence"),
                     sources_count=0,
                 )
                 db.add(report)
-
     except Exception as exc:
         logger.error("persist_results_error", analysis_id=analysis_id, error=str(exc))
 
