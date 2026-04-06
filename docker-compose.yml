@@ -111,13 +111,14 @@ services:
       ENVIRONMENT: production
       LOG_LEVEL: INFO
       ALLOWED_ORIGINS: "http://34.172.33.24:3000"
-      # LLM backend — override in .env with LLM_API_KEY and optionally LLM_BASE_URL
-      LLM_BASE_URL: "https://api.siliconflow.cn/v1"
-      CLAUDE_MODEL: "deepseek-ai/DeepSeek-V3"
-      CLAUDE_HAIKU_MODEL: "Qwen/Qwen2.5-7B-Instruct"
-      ORCHESTRATOR_MODEL: "THUDM/glm-4-9b-chat"
-      MARKET_INTEL_MODEL: "Qwen/Qwen2.5-72B-Instruct"
-      SYNTHESIS_MODEL: "deepseek-ai/DeepSeek-V3"
+      # LLM backend — set LLM_API_KEY=gsk_... in .env (Groq free tier)
+      # Sign up free at groq.com → API Keys
+      LLM_BASE_URL: "https://api.groq.com/openai/v1"
+      CLAUDE_MODEL: "llama-3.3-70b-versatile"
+      CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
+      ORCHESTRATOR_MODEL: "llama-3.1-8b-instant"
+      MARKET_INTEL_MODEL: "llama-3.3-70b-versatile"
+      SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
       CLAUDE_MAX_TOKENS: "8000"
     depends_on:
       postgres:
@@ -158,12 +159,12 @@ services:
       LANGFUSE_HOST: http://langfuse:3000
       ENVIRONMENT: production
       LOG_LEVEL: INFO
-      LLM_BASE_URL: "https://api.siliconflow.cn/v1"
-      CLAUDE_MODEL: "deepseek-ai/DeepSeek-V3"
-      CLAUDE_HAIKU_MODEL: "Qwen/Qwen2.5-7B-Instruct"
-      ORCHESTRATOR_MODEL: "THUDM/glm-4-9b-chat"
-      MARKET_INTEL_MODEL: "Qwen/Qwen2.5-72B-Instruct"
-      SYNTHESIS_MODEL: "deepseek-ai/DeepSeek-V3"
+      LLM_BASE_URL: "https://api.groq.com/openai/v1"
+      CLAUDE_MODEL: "llama-3.3-70b-versatile"
+      CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
+      ORCHESTRATOR_MODEL: "llama-3.1-8b-instant"
+      MARKET_INTEL_MODEL: "llama-3.3-70b-versatile"
+      SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
       CLAUDE_MAX_TOKENS: "8000"
     depends_on:
       postgres:

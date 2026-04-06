@@ -87,29 +87,29 @@ class Settings(BaseSettings):
 
     # ── LLM Backend (OpenAI-compatible — SiliconFlow, Ollama, etc.) ─────────
     llm_base_url: str = Field(
-        default="https://api.siliconflow.cn/v1",
-        description="OpenAI-compatible API base URL (SiliconFlow / Ollama / vLLM)",
+        default="https://api.groq.com/openai/v1",
+        description="OpenAI-compatible API base URL (Groq / SiliconFlow / Ollama / vLLM)",
     )
     llm_api_key: SecretStr = Field(
         default="",
-        description="API key for the LLM provider (SiliconFlow key, or empty for Ollama)",
+        description="API key for the LLM provider (Groq: gsk_..., or empty for Ollama)",
     )
 
     # Primary model — deep reasoning + strategic analysis (all agents by default)
-    # SiliconFlow free-tier: deepseek-ai/DeepSeek-V3
-    claude_model: str = "deepseek-ai/DeepSeek-V3"
+    # Groq free-tier: llama-3.3-70b-versatile (128K context, best quality)
+    claude_model: str = "llama-3.3-70b-versatile"
 
-    # Fast/lightweight model — used for the Orchestrator classification step
-    # SiliconFlow free-tier: Qwen/Qwen2.5-7B-Instruct
-    claude_haiku_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    # Fast/lightweight model — Orchestrator classification (low latency)
+    # Groq free-tier: llama-3.1-8b-instant
+    claude_haiku_model: str = "llama-3.1-8b-instant"
 
-    # Per-agent model overrides (empty = use claude_model)
-    orchestrator_model: str = ""   # default: claude_haiku_model (fast classification)
-    market_intel_model: str = ""   # default: claude_model
-    risk_model: str = ""           # default: claude_model
-    financial_model_name: str = "" # default: claude_model
-    competitor_model: str = ""     # default: claude_model
-    synthesis_model: str = ""      # default: claude_model
+    # Per-agent model overrides (empty string = use claude_model)
+    orchestrator_model: str = "llama-3.1-8b-instant"  # fast classification
+    market_intel_model: str = "llama-3.3-70b-versatile"
+    risk_model: str = ""           # → claude_model
+    financial_model_name: str = "" # → claude_model
+    competitor_model: str = ""     # → claude_model
+    synthesis_model: str = "llama-3.3-70b-versatile"
 
     embedding_model: str = "BAAI/bge-large-en-v1.5"
     claude_max_tokens: int = 8000
