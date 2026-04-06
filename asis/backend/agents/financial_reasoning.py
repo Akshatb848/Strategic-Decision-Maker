@@ -112,7 +112,7 @@ class FinancialReasoningAgent(BaseAgent):
 
         # ── Step 1: FinancialDataMCP — FMP sector peer data ────────────────────
         await self._log(state, "info", f"[FINANCIAL REASONING] Fetching sector peer financial data from FMP (Financial Modeling Prep) — {sector}...")
-        fmp_peers = await self._financial_data.get_sector_peers(sector, limit=5)
+        fmp_peers = await self._financial_data.get_sector_overview(sector)
         logger.info(
             "financial_reasoning_fmp",
             sector=sector,
