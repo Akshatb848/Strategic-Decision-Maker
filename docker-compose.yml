@@ -107,11 +107,18 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       QDRANT_URL: http://qdrant:6333
-      LITELLM_PROXY_URL: http://litellm:4000
       LANGFUSE_HOST: http://langfuse:3000
       ENVIRONMENT: production
       LOG_LEVEL: INFO
       ALLOWED_ORIGINS: "http://34.172.33.24:3000"
+      # LLM backend — override in .env with LLM_API_KEY and optionally LLM_BASE_URL
+      LLM_BASE_URL: "https://api.siliconflow.cn/v1"
+      CLAUDE_MODEL: "deepseek-ai/DeepSeek-V3"
+      CLAUDE_HAIKU_MODEL: "Qwen/Qwen2.5-7B-Instruct"
+      ORCHESTRATOR_MODEL: "THUDM/glm-4-9b-chat"
+      MARKET_INTEL_MODEL: "Qwen/Qwen2.5-72B-Instruct"
+      SYNTHESIS_MODEL: "deepseek-ai/DeepSeek-V3"
+      CLAUDE_MAX_TOKENS: "8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -148,10 +155,16 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       QDRANT_URL: http://qdrant:6333
-      LITELLM_PROXY_URL: http://litellm:4000
       LANGFUSE_HOST: http://langfuse:3000
       ENVIRONMENT: production
       LOG_LEVEL: INFO
+      LLM_BASE_URL: "https://api.siliconflow.cn/v1"
+      CLAUDE_MODEL: "deepseek-ai/DeepSeek-V3"
+      CLAUDE_HAIKU_MODEL: "Qwen/Qwen2.5-7B-Instruct"
+      ORCHESTRATOR_MODEL: "THUDM/glm-4-9b-chat"
+      MARKET_INTEL_MODEL: "Qwen/Qwen2.5-72B-Instruct"
+      SYNTHESIS_MODEL: "deepseek-ai/DeepSeek-V3"
+      CLAUDE_MAX_TOKENS: "8000"
     depends_on:
       postgres:
         condition: service_healthy

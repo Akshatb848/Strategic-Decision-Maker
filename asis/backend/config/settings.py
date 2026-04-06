@@ -85,24 +85,50 @@ class Settings(BaseSettings):
     )
     rate_limit_per_minute: int = 20
 
-    # ── LiteLLM Proxy ────────────────────────────────────────────────────────
+    # ── LLM Backend (OpenAI-compatible — SiliconFlow, Ollama, etc.) ─────────
+    llm_base_url: str = Field(
+        default="https://api.siliconflow.cn/v1",
+        description="OpenAI-compatible API base URL (SiliconFlow / Ollama / vLLM)",
+    )
+    llm_api_key: SecretStr = Field(
+        default="",
+        description="API key for the LLM provider (SiliconFlow key, or empty for Ollama)",
+    )
+
+    # Primary model — deep reasoning + strategic analysis (all agents by default)
+    # SiliconFlow free-tier: deepseek-ai/DeepSeek-V3
+    claude_model: str = "deepseek-ai/DeepSeek-V3"
+
+    # Fast/lightweight model — used for the Orchestrator classification step
+    # SiliconFlow free-tier: Qwen/Qwen2.5-7B-Instruct
+    claude_haiku_model: str = "Qwen/Qwen2.5-7B-Instruct"
+
+    # Per-agent model overrides (empty = use claude_model)
+    orchestrator_model: str = ""   # default: claude_haiku_model (fast classification)
+    market_intel_model: str = ""   # default: claude_model
+    risk_model: str = ""           # default: claude_model
+    financial_model_name: str = "" # default: claude_model
+    competitor_model: str = ""     # default: claude_model
+    synthesis_model: str = ""      # default: claude_model
+
+    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    claude_max_tokens: int = 8000
+
+    # Legacy Anthropic key — kept so existing .env files don't break.
+    # Not used when llm_api_key is set.
+    anthropic_api_key: SecretStr = Field(
+        default="",
+        description="Legacy Anthropic API key (not used when llm_api_key is set)",
+    )
+
+    # ── LiteLLM Proxy (legacy, unused) ───────────────────────────────────────
     litellm_proxy_url: str = Field(
         default="http://localhost:4000",
-        description="LiteLLM proxy base URL — all LLM calls routed here",
+        description="LiteLLM proxy base URL (unused — direct API calls now)",
     )
     litellm_master_key: SecretStr = Field(
         default="sk-litellm-master-key",
-        description="LiteLLM proxy master key",
-    )
-    # Model aliases through LiteLLM
-    claude_model: str = "claude-3-5-sonnet-20241022"
-    claude_haiku_model: str = "claude-3-5-haiku-20241022"
-    embedding_model: str = "text-embedding-3-small"
-    claude_max_tokens: int = 16000
-
-    # Anthropic key kept for LiteLLM proxy config / direct fallback
-    anthropic_api_key: SecretStr = Field(
-        ..., description="Anthropic API key (used by LiteLLM proxy)"
+        description="LiteLLM proxy master key (unused)",
     )
 
     # ── Qdrant (Vector Store) ─────────────────────────────────────────────────

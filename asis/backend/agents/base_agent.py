@@ -23,9 +23,7 @@ logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 _SSECallback = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
-# Anthropic API constants
-_ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-_ANTHROPIC_VERSION = "2023-06-01"
+# OpenAI-compatible API — endpoint is appended to settings.llm_base_url at runtime
 
 
 class BaseAgent(ABC):
@@ -140,7 +138,29 @@ class BaseAgent(ABC):
     @abstractmethod
     async def run(self, state: AgentState) -> AgentState: ...
 
-    # ── Anthropic API call ────────────────────────────────────────────────────
+    # ── LLM API call (OpenAI-compatible: SiliconFlow / Ollama / vLLM) ────────
+
+    def _resolve_model(self, model: str | None) -> str:
+        """Return model name: explicit override → agent default → primary model."""
+        if model:
+            return model
+        # Per-agent overrides from settings
+        overrides: dict[str, str] = {
+            "orchestrator": self._settings.orchestrator_model or self._settings.claude_haiku_model,
+            "market_intelligence": self._settings.market_intel_model or self._settings.claude_model,
+            "risk_assessment": self._settings.risk_model or self._settings.claude_model,
+            "financial_reasoning": self._settings.financial_model_name or self._settings.claude_model,
+            "competitor_analysis": self._settings.competitor_model or self._settings.claude_model,
+            "synthesis": self._settings.synthesis_model or self._settings.claude_model,
+        }
+        return overrides.get(self.name, self._settings.claude_model)
+
+    def _get_api_key(self) -> str:
+        """Return llm_api_key if set, otherwise fall back to anthropic_api_key."""
+        key = self._settings.llm_api_key.get_secret_value()
+        if key:
+            return key
+        return self._settings.anthropic_api_key.get_secret_value()
 
     async def _call_llm(
         self,
@@ -150,32 +170,30 @@ class BaseAgent(ABC):
         max_tokens: int | None = None,
         temperature: float = 0.3,
     ) -> tuple[str, int]:
-        """Call Anthropic Messages API directly. Returns (content, total_tokens)."""
-        _model = model or self._settings.claude_model
+        """Call OpenAI-compatible API (SiliconFlow/Ollama/vLLM). Returns (content, total_tokens)."""
+        _model = self._resolve_model(model)
         _max_tokens = max_tokens or self._settings.claude_max_tokens
-        api_key = self._settings.anthropic_api_key.get_secret_value()
+        api_key = self._get_api_key()
+
+        url = self._settings.llm_base_url.rstrip("/") + "/chat/completions"
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
         payload = {
             "model": _model,
             "max_tokens": _max_tokens,
             "temperature": temperature,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_prompt}],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
         }
 
         async with httpx.AsyncClient(timeout=self._settings.agent_timeout_seconds) as client:
-            resp = await client.post(
-                _ANTHROPIC_API_URL,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": _ANTHROPIC_VERSION,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+            resp = await client.post(url, headers=headers, json=payload)
 
         if not resp.is_success:
-            # Log the full response body so we can diagnose API errors
             try:
                 error_body = resp.json()
             except Exception:
@@ -185,14 +203,15 @@ class BaseAgent(ABC):
                 agent=self.name,
                 status_code=resp.status_code,
                 model=_model,
+                url=url,
                 error=error_body,
             )
             resp.raise_for_status()
 
         data = resp.json()
-        content: str = data["content"][0]["text"]
+        content: str = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
-        total_tokens: int = int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+        total_tokens: int = int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0))
         return content, total_tokens
 
     async def _call_llm_json(
