@@ -60,10 +60,14 @@ _AGENT_NAMES = [
     "synthesis",
 ]
 
-# ── Module-level SSE queue registry ───────────────────────────────────────────
-# Maps analysis_id → asyncio.Queue for live event delivery.
-# Populated when graph starts; cleaned up when graph completes/fails.
+# ── Module-level registries ────────────────────────────────────────────────────
+# SSE queues: analysis_id → asyncio.Queue for live event delivery.
 _live_queues: dict[str, asyncio.Queue[dict[str, Any] | None]] = {}
+
+# Background task store — CRITICAL: event loop holds only weak refs to Tasks.
+# Without a strong reference here, the GC can collect the task mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_running_tasks: set[asyncio.Task] = set()
 
 
 # ── POST /analysis ─────────────────────────────────────────────────────────────
@@ -129,11 +133,14 @@ async def create_analysis(
 
     # Launch graph in independent background task — persists results regardless
     # of whether the SSE connection stays open or the client navigates away.
+    # Store strong reference in _running_tasks to prevent GC mid-execution.
     start_time = int(time.time() * 1000)
-    asyncio.create_task(
+    task = asyncio.create_task(
         _run_graph_and_persist(analysis_id, initial_state, sse_queue, start_time),
         name=f"asis-graph-{analysis_id[:8]}",
     )
+    _running_tasks.add(task)
+    task.add_done_callback(_running_tasks.discard)
 
     return StreamingResponse(
         _drain_sse_queue(analysis_id, sse_queue),
@@ -161,12 +168,15 @@ async def _run_graph_and_persist(
     This task is independent of the SSE generator — it will complete and
     write to the DB even if the client disconnects mid-stream.
     """
+    logger.info("graph_task_start", analysis_id=analysis_id)
     try:
         final_state: AgentState = await asis_graph.ainvoke(initial_state)
         duration_ms = int(time.time() * 1000) - start_time
 
         async with AsyncSessionLocal() as db:
             await _persist_results(analysis_id, final_state, duration_ms, db)
+
+        logger.info("graph_task_complete", analysis_id=analysis_id, duration_ms=duration_ms)
 
         # Notify any connected SSE consumers that we're done
         await sse_queue.put({
@@ -179,14 +189,21 @@ async def _run_graph_and_persist(
             },
         })
 
-    except Exception as exc:
-        logger.error("pipeline_error", analysis_id=analysis_id, error=str(exc))
-        async with AsyncSessionLocal() as db:
-            await _mark_failed(analysis_id, str(exc), db)
+    except BaseException as exc:
+        # Catch ALL exceptions including asyncio.CancelledError so they are logged
+        error_msg = f"{type(exc).__name__}: {exc}"
+        logger.error("pipeline_error", analysis_id=analysis_id, error=error_msg)
+        try:
+            async with AsyncSessionLocal() as db:
+                await _mark_failed(analysis_id, error_msg, db)
+        except Exception:
+            pass
         await sse_queue.put({
             "event": "error",
-            "data": {"analysis_id": analysis_id, "message": str(exc)},
+            "data": {"analysis_id": analysis_id, "message": error_msg},
         })
+        if isinstance(exc, asyncio.CancelledError):
+            raise  # re-raise so asyncio knows the task was cancelled
 
     finally:
         # Sentinel: tells the SSE drain loop to close the stream
