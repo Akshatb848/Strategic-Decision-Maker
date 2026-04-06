@@ -65,40 +65,31 @@ export interface AnalysisDetail extends AnalysisSummary {
   options?: AnalysisOptions;
 }
 
-export interface StrategicOption {
-  option_id: string;
-  title: string;
-  description: string;
-  rationale: string;
-  pros: string[];
-  cons: string[];
-  estimated_investment_usd_mn: number | null;
-  time_to_value: string;
-  risk_level: "low" | "medium" | "high";
-  recommended: boolean;
+export interface RoadmapPhase {
+  phase: string;
+  focus: string;
+  key_actions: string[];
+  investment: string;
+  success_metric: string;
 }
 
-export interface NextStep {
-  priority: number;
-  action: string;
-  owner: string;
-  timeline: string;
-  success_criteria: string;
+export interface BalancedScorecard {
+  financial: string;
+  customer: string;
+  internal_process: string;
+  learning_growth: string;
 }
 
 export interface StrategicBrief {
   executive_summary: string;
-  recommendation: string;
-  strategic_options: StrategicOption[];
-  risk_summary: string;
-  financial_summary: string;
-  market_summary: string;
-  competitive_summary: string;
-  next_steps: NextStep[];
-  confidence_score: number;
-  data_quality_score: number;
-  caveats: string[];
-  sources: string[];
+  strategic_imperatives: string[];
+  roadmap: RoadmapPhase[];
+  balanced_scorecard: BalancedScorecard;
+  success_metrics: string[];
+  decision_recommendation: "PROCEED" | "DEFER" | "REJECT" | "CONDITIONAL";
+  overall_confidence: number;
+  board_narrative: string;
+  dissertation_contribution: string;
 }
 
 export interface ReportSummary {

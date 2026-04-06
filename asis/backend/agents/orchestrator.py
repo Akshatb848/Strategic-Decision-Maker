@@ -1,8 +1,7 @@
 """
 ASIS v3.0 — Orchestrator Agent.
-Classifies the incoming query, queries Mem0 for prior analyses on the same
-company, and produces a structured TaskPlan that routes work to specialist
-agents. Does NOT perform strategic analysis itself.
+Dissertation: Minto Pyramid Principle + Issue Tree decomposition.
+Decomposes strategic query into MECE sub-problems and routes to specialist agents.
 """
 from __future__ import annotations
 
@@ -11,118 +10,79 @@ import json
 from asis.backend.config.logging import get_logger
 from asis.backend.graph.state import AgentState
 from asis.backend.memory.mem0_client import get_mem0_client
-from asis.backend.schemas.agent_outputs import TaskPlan
+from asis.backend.schemas.agent_outputs import OrchestratorOutput
 from .base_agent import BaseAgent
 
 logger = get_logger(__name__)
 
+MASTER_SYSTEM_PROMPT = """\
+You are a specialist agent within ASIS (Autonomous Strategic Intelligence System), \
+a multi-agent AI platform built for enterprise strategic decision-making in Multinational Corporations.
+
+CRITICAL OPERATING RULES — NEVER VIOLATE:
+1. You MUST return ONLY a valid, parseable JSON object. No prose, no markdown, no backticks, no explanation before or after.
+2. Every string value must be concise and specific to the problem context. No generic placeholders.
+3. Every numeric field (scores, percentages, budgets) must contain a realistic, defensible number.
+4. If you are uncertain about a value, provide a reasoned estimate — never leave a field empty or null.
+5. Your output will be parsed programmatically. A malformed response causes system failure.
+6. Ground every finding in real-world enterprise context relevant to the company and industry specified.\
+"""
+
 SYSTEM_PROMPT = """\
-You are the Chief Strategy Coordinator for ASIS (Autonomous Strategic Intelligence System) v3.0.
+You are the ASIS Orchestrator Agent. Your role is to decompose complex enterprise strategic questions \
+into structured sub-problems and route analytical tasks to specialist agents. \
+You operate as the "Chief Strategy Officer" of the pipeline.
 
-Your ONLY task is to read the incoming business query—optionally enriched with prior memory
-context from Mem0—and produce a structured JSON execution plan that routes work to the correct
-specialist agents. You do NOT perform strategic analysis yourself.
+Apply the Minto Pyramid Principle to structure the problem. Use an Issue Tree to decompose it into \
+mutually exclusive, collectively exhaustive (MECE) sub-questions.
 
-## Available specialist agents and their responsibilities
+CRITICAL: Return ONLY a valid JSON object matching this EXACT schema. No text before or after. No markdown.
 
-| Agent                 | Responsibility |
-|-----------------------|----------------|
-| market_intelligence   | Environmental scanning, macro trends, market sizing, TAM/SAM/SOM, industry dynamics,
-|                       | regulatory landscape, entry barriers |
-| risk_assessment       | Geopolitical, regulatory, operational, reputational, financial and cyber risk evaluation |
-| financial_reasoning   | Quantitative modelling, capex/opex estimation, ROI, IRR, NPV, peer benchmarking |
-| competitor_analysis   | Porter Five Forces, competitor profiling, positioning maps, strategic white space |
-| synthesis             | Integrates all specialist outputs into the final board-ready executive brief (ALWAYS last) |
-
-## Query classification rules
-
-| query_type     | Agents to invoke                                                                   |
-|----------------|------------------------------------------------------------------------------------|
-| full_brief     | market_intelligence + risk_assessment + financial_reasoning + competitor_analysis + synthesis |
-| risk_only      | risk_assessment + synthesis                                                        |
-| financial_only | financial_reasoning + market_intelligence + synthesis                              |
-| competitive    | competitor_analysis + market_intelligence + synthesis                              |
-| custom         | Agent subset determined by query content                                           |
-
-**Default** to `full_brief` when the query does not clearly fit a narrower type.
-
-## Dependency and parallelism rules
-- market_intelligence, risk_assessment, and competitor_analysis CAN run in parallel.
-- financial_reasoning MUST run AFTER market_intelligence (depends on market sizing data).
-- synthesis ALWAYS runs last, after all selected specialists complete.
-
-## SubTask construction guidelines
-Each SubTask must have:
-- `agent`: exact agent name from the table above
-- `objective`: specific, actionable instruction for that agent (not generic)
-- `priority`: 1 (critical) through 5 (low) — market_intelligence/risk are typically 1-2
-- `context_keys`: AgentState keys that agent should read, e.g. ["market_report"] for financial_reasoning
-
-## Sector and geography extraction
-Extract `sector` and `geography` from the company_context or infer from the query.
-Set `company_name` from company_context.company_name or company_context.name.
-
-## Prior memory context
-If prior Mem0 memory context is provided, acknowledge it in the `reasoning` field.
-Adjust subtask objectives to avoid redundant work and flag where delta analysis is needed.
-Set `memory_context` to the relevant memory string and `memory_hit` to true.
-
-## Output format
-Return valid JSON ONLY — no prose, no markdown fences. The JSON must exactly match
-the TaskPlan schema fields: query_type, company_name, sector, geography, agent_sequence,
-subtasks, memory_context, memory_hit, reasoning.
-
-Example shape (do not copy verbatim — generate from the actual query):
 {
-  "query_type": "full_brief",
-  "company_name": "Acme Corp",
-  "sector": "Technology",
-  "geography": "Southeast Asia",
-  "agent_sequence": ["market_intelligence", "risk_assessment", "competitor_analysis", "financial_reasoning", "synthesis"],
-  "subtasks": [
-    {
-      "agent": "market_intelligence",
-      "objective": "Size the B2B SaaS market in Southeast Asia, identify top regulatory headwinds, and quantify growth CAGR 2024-2028.",
-      "priority": 1,
-      "context_keys": []
-    },
-    {
-      "agent": "risk_assessment",
-      "objective": "Assess geopolitical, data-sovereignty, and operational risks for a Singapore market entry by a US-headquartered SaaS firm.",
-      "priority": 1,
-      "context_keys": []
-    },
-    {
-      "agent": "competitor_analysis",
-      "objective": "Profile the top 5 B2B SaaS competitors in SEA, apply Porter Five Forces, and identify strategic white space.",
-      "priority": 2,
-      "context_keys": []
-    },
-    {
-      "agent": "financial_reasoning",
-      "objective": "Model 3-year revenue projections, capex/opex for SEA market entry, and benchmark against regional SaaS comparables.",
-      "priority": 2,
-      "context_keys": ["market_report"]
-    },
-    {
-      "agent": "synthesis",
-      "objective": "Produce board-ready strategic brief integrating all specialist outputs with ranked strategic options.",
-      "priority": 1,
-      "context_keys": ["market_report", "risk_register", "financial_model", "competitor_brief"]
-    }
+  "problem_decomposition": [
+    "MECE sub-problem 1 (specific, actionable)",
+    "MECE sub-problem 2 (specific, actionable)",
+    "MECE sub-problem 3 (specific, actionable)",
+    "MECE sub-problem 4 (specific, actionable)"
   ],
-  "memory_context": "",
-  "memory_hit": false,
-  "reasoning": "Query requests a full market entry assessment with no narrower constraint. All four specialists are required. Financial reasoning depends on market intelligence output so runs after it."
+  "analytical_framework": "Primary strategic framework name and why it was selected",
+  "agent_assignments": {
+    "market_intelligence": "Specific research task with defined scope and output",
+    "risk_assessment": "Specific risk quantification task with methodology",
+    "competitor_analysis": "Specific benchmarking task with dimensions to measure",
+    "financial_reasoning": "Specific financial modelling task with scenario parameters",
+    "synthesis": "Integration task with deliverable specification"
+  },
+  "key_hypotheses": [
+    "Falsifiable hypothesis 1 grounded in the problem context",
+    "Falsifiable hypothesis 2 grounded in the problem context",
+    "Falsifiable hypothesis 3 grounded in the problem context"
+  ],
+  "success_criteria": [
+    "Measurable criterion 1 with metric",
+    "Measurable criterion 2 with metric",
+    "Measurable criterion 3 with metric"
+  ],
+  "confidence_score": 87,
+  "strategic_priority": "HIGH",
+  "time_horizon": "3-5 years",
+  "dissertation_note": "One sentence connecting this decomposition to multi-agent AI theory",
+  "query_type": "full_brief"
 }
+
+Additional safety instructions:
+- If you are unsure about any field, provide your best reasoned estimate — never omit a field.
+- If a list field requires N items, always provide exactly N items.
+- Numeric scores must be integers between 0 and 100.
+- The JSON must be parseable by JSON.parse() with no preprocessing.\
 """
 
 
 class OrchestratorAgent(BaseAgent):
-    """Agent 1 — Classifies query and builds execution plan. Enriches with Mem0 context."""
+    """Agent 1 — Decomposes strategic query using Minto Pyramid. Enriches with Mem0 context."""
 
     name = "orchestrator"
-    description = "Classifies query type and produces a TaskPlan routing work to specialist agents."
+    description = "Strategic decomposition, problem framing, and agent task assignment."
 
     async def run(self, state: AgentState) -> AgentState:
         query = state.get("query", "").strip()
@@ -151,12 +111,11 @@ class OrchestratorAgent(BaseAgent):
         memory_hit = len(memories) > 0
 
         if memory_hit:
-            await self._log(state, "info", f"[ORCHESTRATOR] Found {len(memories)} prior memory context(s) for {company_name}")
-        logger.info("orchestrator_mem0", company=company_name, memory_hit=memory_hit, memory_count=len(memories))
+            await self._log(state, "info", f"[ORCHESTRATOR] Found {len(memories)} prior analysis context(s) for {company_name}")
 
         # ── Step 2: Build user message ────────────────────────────────────────
-        await self._log(state, "info", "[ORCHESTRATOR] Framing strategic problem and routing workstreams...")
-        memory_section = f"\n\n{memory_context}\n" if memory_context else ""
+        await self._log(state, "info", "[ORCHESTRATOR] Applying Minto Pyramid — decomposing strategic problem into MECE issue tree...")
+        memory_section = f"\n\nPrior ASIS context for {company_name}:\n{memory_context}\n" if memory_context else ""
         user_message = (
             f"Strategic Query: {query}\n\n"
             f"Company Context:\n{json.dumps(context, indent=2)}"
@@ -164,30 +123,30 @@ class OrchestratorAgent(BaseAgent):
             "Produce the TaskPlan execution plan JSON now."
         )
 
-        # ── Step 3: Call LLM for TaskPlan ────────────────────────────────────
-        await self._log(state, "info", "[ORCHESTRATOR] Calling LLM — classifying query and building execution plan...")
-        task_plan, tokens = await self._call_llm_json(SYSTEM_PROMPT, user_message, TaskPlan)
-        await self._log(state, "info", f"[ORCHESTRATOR] Query type: {task_plan.query_type} | Agents: {', '.join(task_plan.agent_sequence)}")
+        # ── Step 3: LLM call ──────────────────────────────────────────────────
+        await self._log(state, "info", "[ORCHESTRATOR] Calling LLM — classifying query and routing to specialist agents...")
+        task_plan, tokens = await self._call_llm_json(
+            f"{MASTER_SYSTEM_PROMPT}\n\n{SYSTEM_PROMPT}",
+            user_message,
+            OrchestratorOutput,
+        )
+        await self._log(state, "info", f"[ORCHESTRATOR] Framework: {task_plan.analytical_framework[:80]} | Priority: {task_plan.strategic_priority} | Horizon: {task_plan.time_horizon}")
 
         # ── Step 4: Update state ──────────────────────────────────────────────
         meta = self._accumulate_tokens(state, tokens)
         meta["memory_context"] = memory_context
         meta["memory_hit"] = memory_hit
 
-        updated: AgentState = {
-            **state,
-            "task_plan": task_plan.model_dump(),
-            "agent_sequence": task_plan.agent_sequence,
-            "metadata": meta,
-        }
-
         logger.info(
             "orchestrator_plan",
-            query_type=task_plan.query_type,
-            company=task_plan.company_name,
-            sector=task_plan.sector,
-            geography=task_plan.geography,
-            agent_sequence=task_plan.agent_sequence,
+            company=task_plan.agent_assignments.keys(),
+            priority=task_plan.strategic_priority,
             memory_hit=memory_hit,
         )
-        return updated
+
+        return {
+            **state,
+            "task_plan": task_plan.model_dump(),
+            "agent_sequence": list(task_plan.agent_assignments.keys()),
+            "metadata": meta,
+        }

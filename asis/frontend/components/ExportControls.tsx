@@ -60,38 +60,43 @@ function briefToMarkdown(brief: StrategicBrief, analysisId: string): string {
     `# ASIS Strategic Brief`,
     `*Analysis ID: ${analysisId}*`,
     ``,
-    `## Lead Recommendation`,
-    brief.recommendation,
+    `## Board Decision: ${brief.decision_recommendation}`,
+    `*${brief.board_narrative}*`,
     ``,
-    `**Confidence:** ${brief.confidence_score.toFixed(1)}/10 | **Data Quality:** ${brief.data_quality_score.toFixed(1)}/10`,
+    `**Overall Confidence:** ${brief.overall_confidence}/100`,
     ``,
     `## Executive Summary`,
     brief.executive_summary,
     ``,
-    `## Strategic Options`,
-    ...brief.strategic_options.map(
-      (o) =>
-        `### ${o.option_id}: ${o.title}${o.recommended ? " (Recommended)" : ""}\n${o.description}\n\n**Risk:** ${o.risk_level}\n\n**Pros:** ${o.pros.join(", ")}\n\n**Cons:** ${o.cons.join(", ")}`
-    ),
+    `## Strategic Imperatives`,
+    ...(brief.strategic_imperatives ?? []).map((imp, i) => `${i + 1}. ${imp}`),
     ``,
-    `## Risk Assessment`,
-    brief.risk_summary,
+    `## Strategic Roadmap`,
+    ...(brief.roadmap ?? []).flatMap((phase) => [
+      `### ${phase.phase} — ${phase.investment}`,
+      `*${phase.focus}*`,
+      ``,
+      ...(phase.key_actions ?? []).map((a) => `- ${a}`),
+      ``,
+      `**KPI:** ${phase.success_metric}`,
+      ``,
+    ]),
+    `## Balanced Scorecard`,
+    ...(brief.balanced_scorecard
+      ? [
+          `- **Financial:** ${brief.balanced_scorecard.financial}`,
+          `- **Customer:** ${brief.balanced_scorecard.customer}`,
+          `- **Internal Process:** ${brief.balanced_scorecard.internal_process}`,
+          `- **Learning & Growth:** ${brief.balanced_scorecard.learning_growth}`,
+        ]
+      : []),
     ``,
-    `## Financial Considerations`,
-    brief.financial_summary,
-    ``,
-    `## Next Steps`,
-    ...brief.next_steps
-      .slice()
-      .sort((a, b) => a.priority - b.priority)
-      .map((s) => `${s.priority}. **${s.action}** (${s.owner}) — ${s.timeline}`),
-    ``,
-    `## Sources`,
-    ...brief.sources.map((s, i) => `[${i + 1}] ${s}`),
+    `## Success Metrics`,
+    ...(brief.success_metrics ?? []).map((m) => `- ${m}`),
   ];
 
-  if (brief.caveats.length > 0) {
-    lines.push(``, `## Caveats`, ...brief.caveats.map((c) => `- ${c}`));
+  if (brief.dissertation_contribution) {
+    lines.push(``, `---`, `*${brief.dissertation_contribution}*`);
   }
 
   return lines.join("\n");

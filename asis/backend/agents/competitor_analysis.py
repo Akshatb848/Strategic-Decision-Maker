@@ -1,112 +1,96 @@
 """
 ASIS v3.0 — Competitor Analysis Agent.
-Porter's Five Forces analysis + direct competitor profiling + strategic white space mapping.
-
-Data sources (in priority order):
-  1. n8n WF07 competitor watchlist cache — pre-loaded into state metadata
-  2. Qdrant RAG — internal competitor intelligence documents
-  3. Tavily web search (WebSearchMCP) — live competitor profiles
+Dissertation: Porter's Generic Strategies + Competitive Intelligence Matrix.
+Multi-dimensional benchmarking with quantified gap analysis.
 """
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from asis.backend.config.logging import get_logger
 from asis.backend.graph.state import AgentState
 from asis.backend.memory.qdrant_store import get_qdrant_store
 from asis.backend.mcp.web_search import WebSearchMCP
-from asis.backend.schemas.agent_outputs import CompetitorBrief
+from asis.backend.schemas.agent_outputs import CompetitorReport
 from .base_agent import BaseAgent
 
 logger = get_logger(__name__)
 
+MASTER_PROMPT = """\
+You are a specialist agent within ASIS. CRITICAL: return ONLY valid parseable JSON. \
+No prose, no markdown, no backticks. Ground every finding in real-world enterprise context.\
+"""
+
 SYSTEM_PROMPT = """\
-You are a Competitive Strategy Specialist at a top-tier strategy consultancy (Bain / McKinsey calibre).
-You are conducting a rigorous competitive analysis for a multinational corporation considering a major
-strategic move. Your output feeds directly into the board-level strategic brief.
+You are the ASIS Competitor Analysis Agent — a competitive intelligence specialist. \
+Benchmark the organisation against primary competitors across strategic dimensions, \
+applying Porter's Generic Strategies framework. Use 0-100 scores for all benchmarks.
 
-## Your mandate
-Deliver a comprehensive competitive intelligence brief that enables the querying company to
-understand its competitive environment, identify threats and opportunities, and define a winning
-position in the target market.
-
-## Mandatory requirements
-1. **Porter's Five Forces — exactly 5**: Analyse ALL five forces with numeric intensity scores (1-10)
-   and substantive rationale. The five force names MUST exactly match the schema literals:
-   - supplier_power
-   - buyer_power
-   - competitive_rivalry
-   - threat_of_substitution
-   - threat_of_new_entry
-   Missing or misnamed forces will fail validation.
-
-2. **Competitor profiles (2-8)**: For each top competitor provide:
-   - Full name, HQ country, estimated revenue, and market share
-   - At least 1 strength and 1 weakness (specific, not generic)
-   - Recent strategic moves (acquisitions, partnerships, product launches, geographic expansion)
-   - Threat level to the querying company: low/medium/high/critical
-   - Mark watchlist_sourced=true if the competitor appears in the n8n WF07 watchlist cache
-
-3. **Strategic white space**: Identify at least 1 uncontested opportunity area that the querying
-   company could exploit given competitor gaps and market dynamics.
-
-4. **Competitive moat assessment**: Write 100+ words assessing the querying company's potential
-   to build a sustainable competitive advantage in this market.
-
-5. **Sources**: List all sources (watchlist, RAG documents, web searches) used.
-
-6. **No fabrication**: Use available data. If specific competitor data is unavailable, note this
-   and use publicly known market structure information.
-
-## Watchlist integration
-If n8n WF07 competitor watchlist data is provided, this is the highest-priority source.
-Use watchlist entries as the basis for competitor profiles and supplement with web data.
-
-## Internal intelligence
-Qdrant RAG documents may contain internal competitor intelligence from the company's knowledge base.
-Treat this as confidential internal source and prioritise it for insight differentiation.
-
-## Output format
-Return valid JSON ONLY — no preamble, no markdown fences.
-The JSON must exactly match the CompetitorBrief schema:
-
+Return ONLY a JSON object matching this schema:
 {
-  "company_name": "string (company being analysed)",
-  "industry": "string (industry / sector)",
-  "five_forces": [
+  "competitive_landscape": [
+    "Named competitor insight 1: specific strategic move or capability",
+    "Named competitor insight 2: specific strategic move or capability",
+    "Named competitor insight 3: specific strategic move or capability"
+  ],
+  "benchmarks": [
     {
-      "force": "supplier_power|buyer_power|competitive_rivalry|threat_of_substitution|threat_of_new_entry",
-      "score": integer 1-10,
-      "rationale": "string (min 30 chars)",
-      "key_factors": ["factor1", "factor2"]
+      "dimension": "Governance Maturity",
+      "our_score": 72,
+      "industry_avg": 68,
+      "leader_score": 91,
+      "gap_to_leader": 19,
+      "benchmark_source": "Industry framework or report name"
+    },
+    {
+      "dimension": "Cybersecurity Resilience",
+      "our_score": 65,
+      "industry_avg": 70,
+      "leader_score": 89,
+      "gap_to_leader": 24,
+      "benchmark_source": "Industry framework or report name"
+    },
+    {
+      "dimension": "Talent Retention Index",
+      "our_score": 78,
+      "industry_avg": 74,
+      "leader_score": 92,
+      "gap_to_leader": 14,
+      "benchmark_source": "Industry framework or report name"
+    },
+    {
+      "dimension": "Regulatory Compliance Score",
+      "our_score": 81,
+      "industry_avg": 76,
+      "leader_score": 95,
+      "gap_to_leader": 14,
+      "benchmark_source": "Industry framework or report name"
     }
   ],
-  "top_competitors": [
-    {
-      "name": "string",
-      "hq_country": "string",
-      "revenue_usd_bn": number,
-      "market_share_pct": number 0-100,
-      "strengths": ["strength1"],
-      "weaknesses": ["weakness1"],
-      "strategic_moves": ["recent move1"],
-      "threat_level": "low|medium|high|critical",
-      "watchlist_sourced": true|false
-    }
+  "competitive_gaps": [
+    "Gap 1: named dimension, quantified gap, and business consequence",
+    "Gap 2: named dimension, quantified gap, and business consequence"
   ],
-  "strategic_white_space": ["opportunity area 1"],
-  "competitive_moat_assessment": "string (min 80 chars)",
-  "sources": ["source1", "source2"]
-}
+  "differentiators": [
+    "Genuine competitive advantage 1 with evidence",
+    "Genuine competitive advantage 2 with evidence"
+  ],
+  "strategic_moves": [
+    "Move 1: specific action to close gap or extend lead, with timeline",
+    "Move 2: specific action to close gap or extend lead, with timeline",
+    "Move 3: specific action to close gap or extend lead, with timeline"
+  ],
+  "market_position": "Challenger",
+  "porter_strategy": "Differentiation Focus",
+  "confidence_score": 76,
+  "key_competitor": "Named primary competitor and why they are the benchmark"
+}\
 """
 
 
 class CompetitorAnalysisAgent(BaseAgent):
-    """Agent 5 — Competitor Analysis. WF07 watchlist + Qdrant RAG + Tavily web."""
-
     name = "competitor_analysis"
-    description = "Porter Five Forces, competitor profiling, and strategic white space analysis."
+    description = "Porter's Generic Strategies benchmarking, competitive gap analysis, strategic moves."
 
     def __init__(self) -> None:
         super().__init__()
@@ -116,136 +100,54 @@ class CompetitorAnalysisAgent(BaseAgent):
         query = state.get("query", "")
         context = state.get("company_context", {})
         task_plan = state.get("task_plan", {})
-        metadata = state.get("metadata", {})
         tenant_id = self._get_tenant_id(state)
 
         sector = context.get("sector", "")
         target_market = context.get("target_market", "")
         geography = context.get("geography", "")
         company_name = context.get("company_name") or context.get("name", "")
+        location = target_market or geography
 
-        # ── Step 1: n8n WF07 competitor watchlist cache ───────────────────────
-        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Loading competitor watchlist (n8n WF07 cache) for {sector} / {target_market or geography}...")
-        watchlist_data = metadata.get("competitor_watchlist", {})
-        watchlist_available = bool(watchlist_data)
+        # Watchlist cache
+        watchlist = state.get("metadata", {}).get("competitor_watchlist", {})
         watchlist_section = ""
-
-        if watchlist_available:
-            watchlist_section = (
-                "## Competitor Watchlist (from n8n WF07 cache — highest priority source):\n"
-                + json.dumps(watchlist_data, indent=2)[:3000]
-                + "\n"
-            )
-            await self._log(state, "info", f"[COMPETITOR ANALYSIS] Watchlist hit — {len(watchlist_data) if isinstance(watchlist_data, list) else 'dict'} competitors loaded from WF07")
-            logger.info(
-                "competitor_analysis_watchlist_hit",
-                company=company_name,
-                entries=len(watchlist_data) if isinstance(watchlist_data, list) else "dict",
-            )
+        if watchlist:
+            watchlist_section = "## Competitor Watchlist (WF07):\n" + json.dumps(watchlist, indent=2)[:2000] + "\n\n"
+            await self._log(state, "info", f"[COMPETITOR ANALYSIS] WF07 watchlist loaded — {len(watchlist) if isinstance(watchlist, list) else 'dict'} entries")
         else:
-            watchlist_section = (
-                "## Competitor Watchlist: Not available — using web search and RAG as primary sources.\n"
-            )
-            await self._log(state, "info", "[COMPETITOR ANALYSIS] No WF07 watchlist cache — using Qdrant RAG and live web search...")
-            logger.info(
-                "competitor_analysis_watchlist_miss",
-                company=company_name,
-            )
+            await self._log(state, "info", f"[COMPETITOR ANALYSIS] Loading competitor intelligence for {sector} / {location}...")
 
-        # ── Step 2: Qdrant RAG for internal competitor intelligence ────────────
-        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Scanning Qdrant RAG for internal competitor intelligence ({sector})...")
+        await self._log(state, "info", "[COMPETITOR ANALYSIS] Scanning Qdrant RAG for internal competitor intelligence...")
         qdrant = get_qdrant_store()
-        rag_query = (
-            f"{sector} {target_market or geography} competitor analysis market leaders"
-        )
         rag_docs = await qdrant.retrieve(
-            query=rag_query,
-            tenant_id=tenant_id,
-            doc_type="competitor_intel",
-            top_k=5,
+            query=f"{sector} {location} competitor analysis market leaders benchmarks",
+            tenant_id=tenant_id, doc_type="competitor_intel", top_k=4,
         )
-
-        rag_context = ""
+        rag_section = ""
         if rag_docs:
-            rag_context = "## Internal Competitor Intelligence (from Qdrant RAG):\n"
-            for i, doc in enumerate(rag_docs, start=1):
-                rag_context += f"[RAG-{i}] (score={doc.score:.2f}) {doc.text[:500]}\n\n"
-            await self._log(state, "info", f"[COMPETITOR ANALYSIS] RAG hit — {len(rag_docs)} competitor intelligence documents retrieved")
-            logger.info(
-                "competitor_analysis_rag",
-                hits=len(rag_docs),
-                tenant_id=tenant_id,
-            )
-        else:
-            rag_context = "## Internal Competitor Intelligence: No documents retrieved from Qdrant.\n"
+            rag_section = "## Internal Competitor Intelligence (Qdrant RAG):\n" + "\n".join(f"[{i+1}] {d.text[:350]}" for i, d in enumerate(rag_docs)) + "\n\n"
+            await self._log(state, "info", f"[COMPETITOR ANALYSIS] RAG hit — {len(rag_docs)} documents")
 
-        # ── Step 3: Tavily web search for live competitor profiles ─────────────
-        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Running Tavily web search — live competitor profiles and recent strategic moves ({target_market or geography})...")
-        web_query = (
-            f"top competitors {sector} {target_market or geography} market share "
-            f"strategic moves 2024 2025"
-        )
-        web_results = await self._web_search.search(web_query, max_results=5)
+        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Querying Tavily — live competitor profiles and strategic moves ({location})...")
+        web_results = await self._web_search.search(f"top competitors {sector} {location} market position strategy 2025", max_results=5)
+        moves_results = await self._web_search.search(f"{sector} {location} acquisition partnership M&A 2025", max_results=3)
 
-        # Also search for recent M&A and strategic moves
-        moves_query = (
-            f"{sector} {target_market or geography} acquisition partnership expansion 2024 2025"
-        )
-        moves_results = await self._web_search.search(moves_query, max_results=3)
+        objective = task_plan.get("agent_assignments", {}).get(self.name, (
+            "Apply Porter's Generic Strategies, benchmark across 4+ dimensions, identify competitive gaps and strategic moves."
+        ))
+        await self._log(state, "info", "[COMPETITOR ANALYSIS] Calling LLM — Porter's Generic Strategies + multi-dimensional benchmarking + gap analysis...")
 
-        # ── Step 4: Build objective from TaskPlan ─────────────────────────────
-        objective = _get_objective(task_plan, self.name)
-
-        # ── Step 5: Assemble LLM prompt ───────────────────────────────────────
-        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Calling LLM — Porter Five Forces analysis + competitor profiling + strategic white space mapping...")
         user_message = (
-            f"Strategic Query: {query}\n\n"
+            f"Orchestrator assignment: {objective}\nProblem: {query}\n\n"
             f"Company Context:\n{json.dumps(context, indent=2)}\n\n"
-            f"Agent Objective: {objective}\n\n"
-            f"{watchlist_section}\n"
-            f"{rag_context}\n"
-            f"## Web Search — Competitor Profiles (Tavily):\n{web_results}\n\n"
-            f"## Web Search — Recent Strategic Moves (Tavily):\n{moves_results}\n\n"
-            "Produce the CompetitorBrief JSON now. "
-            "You MUST include EXACTLY 5 five_forces entries, one per Porter force. "
-            "Use the exact force name literals: supplier_power, buyer_power, "
-            "competitive_rivalry, threat_of_substitution, threat_of_new_entry. "
-            f"Company name is: {company_name or 'as specified in context'}. "
-            f"{'Mark watchlist_sourced=true for competitors found in the WF07 watchlist cache.' if watchlist_available else ''}"
+            f"{watchlist_section}{rag_section}"
+            f"## Competitor Profiles (Tavily):\n{web_results}\n\n"
+            f"## Strategic Moves (Tavily):\n{moves_results}\n\n"
+            f"Benchmark {company_name} in {sector} / {location}. Return CompetitorReport JSON now."
         )
 
-        # ── Step 6: LLM call ───────────────────────────────────────────────────
-        brief, tokens = await self._call_llm_json(
-            SYSTEM_PROMPT,
-            user_message,
-            CompetitorBrief,
-        )
-
-        # ── Step 7: Update state ───────────────────────────────────────────────
+        report, tokens = await self._call_llm_json(f"{MASTER_PROMPT}\n\n{SYSTEM_PROMPT}", user_message, CompetitorReport)
         meta = self._accumulate_tokens(state, tokens)
-        meta["watchlist_available"] = watchlist_available
-
-        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Analysis complete — {len(brief.top_competitors)} competitors profiled | {len(brief.strategic_white_space)} white space opportunities identified")
-        logger.info(
-            "competitor_analysis_complete",
-            company=brief.company_name,
-            competitor_count=len(brief.top_competitors),
-            white_space_count=len(brief.strategic_white_space),
-            tokens=tokens,
-        )
-
-        return {
-            **state,
-            "competitor_brief": brief.model_dump(),
-            "metadata": meta,
-        }
-
-
-def _get_objective(task_plan: dict[str, Any], agent_name: str) -> str:
-    for task in task_plan.get("subtasks", []):
-        if task.get("agent") == agent_name:
-            return task.get("objective", "")
-    return (
-        "Apply Porter's Five Forces rigorously and profile the top competitors. "
-        "Identify strategic white space and assess the company's competitive moat potential."
-    )
+        await self._log(state, "info", f"[COMPETITOR ANALYSIS] Complete — {len(report.benchmarks)} benchmark dimensions | Position: {report.market_position} | Key rival: {report.key_competitor}")
+        logger.info("competitor_analysis_complete", company=company_name, benchmarks=len(report.benchmarks), tokens=tokens)
+        return {**state, "competitor_brief": report.model_dump(), "metadata": meta}

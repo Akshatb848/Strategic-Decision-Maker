@@ -1,5 +1,6 @@
 """
 ASIS v3.0 — Pydantic v2 agent output schemas.
+Aligned with MANG6550 Dissertation prompt architecture.
 Every agent validates its LLM output against these schemas (2 retries on fail).
 """
 
@@ -7,271 +8,250 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
+# Dissertation: Minto Pyramid + Issue Tree decomposition
+
+class OrchestratorOutput(BaseModel):
+    problem_decomposition: list[str] = Field(
+        min_length=2,
+        description="MECE sub-problems (Minto Pyramid Issue Tree)"
+    )
+    analytical_framework: str = Field(
+        description="Primary strategic framework selected and rationale"
+    )
+    agent_assignments: dict[str, str] = Field(
+        description="agent_name → specific task with scope and output"
+    )
+    key_hypotheses: list[str] = Field(
+        min_length=2,
+        description="Falsifiable hypotheses grounded in problem context"
+    )
+    success_criteria: list[str] = Field(
+        min_length=2,
+        description="Measurable success criteria with metrics"
+    )
+    confidence_score: int = Field(ge=0, le=100, default=80)
+    strategic_priority: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "HIGH"
+    time_horizon: str = "3-5 years"
+    dissertation_note: str = Field(
+        default="",
+        description="One sentence connecting to multi-agent AI theory"
+    )
+    # Routing field kept for LangGraph graph compatibility (always full_brief)
+    query_type: str = Field(default="full_brief")
 
 
-class SubTask(BaseModel):
-    agent: str = Field(description="Agent name responsible for this subtask")
-    objective: str = Field(description="Clear objective for the agent")
-    priority: int = Field(ge=1, le=5, description="1=critical, 5=low")
-    context_keys: list[str] = Field(
-        default_factory=list,
-        description="AgentState keys this agent should read",
-    )
-
-
-class TaskPlan(BaseModel):
-    query_type: Literal[
-        "full_brief", "risk_only", "financial_only", "competitive", "custom"
-    ]
-    company_name: str
-    sector: str
-    geography: str
-    agent_sequence: list[str] = Field(
-        min_length=1, description="Ordered list of agents to execute"
-    )
-    subtasks: list[SubTask] = Field(min_length=1)
-    memory_context: str = Field(
-        default="", description="Relevant past analyses from Mem0"
-    )
-    memory_hit: bool = Field(
-        default=False, description="True if Mem0 returned relevant context"
-    )
-    reasoning: str = Field(
-        min_length=20, description="Orchestrator's routing rationale"
-    )
+# Legacy alias — kept so graph routing (task_plan["query_type"]) continues to work
+TaskPlan = OrchestratorOutput
 
 
 # ── Market Intelligence ────────────────────────────────────────────────────────
+# Dissertation: PESTLE + Porter's Five Forces
 
-
-class DataSource(BaseModel):
-    name: str
-    url: str = ""
-    source_type: Literal["rag", "web", "api", "cache"] = "web"
-    relevance_score: float = Field(ge=0.0, le=1.0, default=0.8)
-
-
-class MarketIntelligenceReport(BaseModel):
-    market_name: str
-    market_size_usd_bn: float = Field(ge=0)
-    growth_rate_cagr_pct: float
-    forecast_year: int = Field(ge=2024, le=2035)
-    key_trends: list[str] = Field(
-        min_length=3, description="Minimum 3 key market trends"
+class MarketIntelReport(BaseModel):
+    regulatory_landscape: list[str] = Field(
+        min_length=2,
+        description="Named regulations/standards and their direct operational impact"
     )
-    regulatory_flags: list[str] = Field(
-        default_factory=list, description="Regulatory / compliance considerations"
+    market_signals: list[str] = Field(
+        min_length=2,
+        description="Quantified or named market trends with source context"
     )
-    entry_barriers: list[str] = Field(default_factory=list)
-    rag_sources: list[DataSource] = Field(
-        default_factory=list, description="Sources from Qdrant RAG retrieval"
+    key_findings: list[str] = Field(
+        min_length=2,
+        description="Evidence-grounded insights from environmental scan"
     )
-    web_sources: list[DataSource] = Field(
-        default_factory=list, description="Sources from Tavily web search"
+    emerging_risks: list[str] = Field(
+        default_factory=list,
+        description="Named risks with probability and business impact"
     )
-    analyst_commentary: str = Field(
-        min_length=100, description="Substantive analyst commentary"
+    opportunities: list[str] = Field(
+        default_factory=list,
+        description="Specific strategic opportunities with estimated value"
+    )
+    methodology: str = Field(default="PESTLE + Porter's Five Forces")
+    data_sources: list[str] = Field(default_factory=list)
+    confidence_score: int = Field(ge=0, le=100, default=78)
+    strategic_implication: str = Field(
+        description="Single board-level sentence: what leadership must act on immediately"
     )
 
 
 # ── Risk Assessment ────────────────────────────────────────────────────────────
+# Dissertation: COSO ERM 2017 + ISO 31000 + NIST CSF
 
-
-class RiskItem(BaseModel):
-    risk_id: str = Field(description="Short slug e.g. geopolitical_tension_india")
-    category: Literal[
-        "geopolitical", "regulatory", "operational", "financial", "reputational", "cyber"
-    ]
-    title: str
-    description: str = Field(min_length=50)
-    severity: int = Field(ge=1, le=10, description="Impact severity 1-10")
-    likelihood: int = Field(ge=1, le=10, description="Probability 1-10")
-    risk_score: float = Field(ge=1.0, le=100.0, description="severity × likelihood")
-    mitigations: list[str] = Field(
-        min_length=2, description="At least 2 mitigation strategies"
+class DissertationRiskItem(BaseModel):
+    risk: str = Field(description="Specific named risk (not generic)")
+    category: str = Field(
+        description="Regulatory | Cyber | Operational | Financial | Talent | Reputational | Geopolitical"
     )
-    time_horizon: Literal["immediate", "short_term", "medium_term", "long_term"] = (
-        "medium_term"
+    likelihood: Literal["High", "Medium", "Low"]
+    impact: Literal["Critical", "High", "Medium", "Low"]
+    velocity: Literal["Immediate", "Near-term", "Long-term"]
+    severity_score: int = Field(
+        ge=0, le=100,
+        description="Likelihood × Impact × Velocity normalised to 100"
     )
-    gdelt_sourced: bool = Field(
-        default=False, description="True if sourced from GDELT cache"
+    owner: str = Field(description="Functional owner e.g. Chief Compliance Officer")
+    current_control: str = Field(description="Existing control mechanism")
+
+
+class RiskReport(BaseModel):
+    risk_register: list[DissertationRiskItem] = Field(min_length=2)
+    critical_risks: list[str] = Field(
+        min_length=1,
+        description="Top risks requiring board attention with consequence"
     )
+    mitigation_strategies: list[str] = Field(
+        min_length=2,
+        description="Specific actions with timeline and expected risk reduction %"
+    )
+    residual_risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    risk_appetite_alignment: str = Field(
+        description="Whether current exposure aligns with stated risk appetite"
+    )
+    framework_used: str = Field(default="COSO ERM 2017 + NIST CSF 2.0")
+    confidence_score: int = Field(ge=0, le=100, default=75)
+    board_escalation_required: bool
+    escalation_rationale: str
 
-    @field_validator("risk_score")
-    @classmethod
-    def validate_risk_score(cls, v: float, info: object) -> float:
-        # Allow slight deviation from strict product due to LLM rounding
-        return round(max(1.0, min(100.0, v)), 2)
+
+# ── Competitor Analysis ────────────────────────────────────────────────────────
+# Dissertation: Porter's Generic Strategies + Competitive Intelligence Matrix
+
+class Benchmark(BaseModel):
+    dimension: str
+    our_score: int = Field(ge=0, le=100)
+    industry_avg: int = Field(ge=0, le=100)
+    leader_score: int = Field(ge=0, le=100)
+    gap_to_leader: int = Field(ge=0, le=100)
+    benchmark_source: str
 
 
-class RiskRegister(BaseModel):
-    company_name: str
-    assessment_scope: str
-    risk_items: list[RiskItem] = Field(min_length=3)
-    overall_risk_level: Literal["low", "moderate", "high", "critical"]
-    executive_risk_summary: str = Field(min_length=100)
-    top_risk_ids: list[str] = Field(
-        min_length=1, max_length=3, description="IDs of top 3 risks"
+class CompetitorReport(BaseModel):
+    competitive_landscape: list[str] = Field(
+        min_length=2,
+        description="Named competitor insights: specific strategic moves or capabilities"
+    )
+    benchmarks: list[Benchmark] = Field(
+        min_length=2,
+        description="Multi-dimensional competitor benchmarks (0-100 scale)"
+    )
+    competitive_gaps: list[str] = Field(
+        min_length=1,
+        description="Named dimension, quantified gap, and business consequence"
+    )
+    differentiators: list[str] = Field(
+        min_length=1,
+        description="Genuine competitive advantages with evidence"
+    )
+    strategic_moves: list[str] = Field(
+        min_length=2,
+        description="Specific actions to close gaps or extend lead, with timeline"
+    )
+    market_position: str = Field(
+        description="e.g. Challenger / Leader / Niche Player / Follower"
+    )
+    porter_strategy: str = Field(
+        description="Differentiation Focus / Cost Leadership / Broad Differentiation"
+    )
+    confidence_score: int = Field(ge=0, le=100, default=76)
+    key_competitor: str = Field(
+        description="Named primary competitor and why they are the benchmark"
     )
 
 
 # ── Financial Reasoning ────────────────────────────────────────────────────────
+# Dissertation: McKinsey Three Horizons + NPV/IRR + Real Options
+
+class InvestmentScenario(BaseModel):
+    scenario: str = Field(description="e.g. Minimal Compliance (Horizon 1)")
+    description: str
+    capex: str = Field(description="e.g. $8m")
+    opex_annual: str = Field(description="e.g. $3.2m")
+    risk_reduction: str = Field(description="e.g. 28%")
+    npv_3yr: str = Field(description="e.g. $12m")
+    roi_3yr: str = Field(description="e.g. 42%")
+    payback_months: int = Field(ge=0)
 
 
-class RevenueProjection(BaseModel):
-    year: int
-    low_usd_mn: float
-    base_usd_mn: float
-    high_usd_mn: float
-
-
-class ComparableFirm(BaseModel):
-    name: str
-    ticker: str = ""
-    revenue_usd_bn: float
-    ebitda_margin_pct: float
-    market_cap_usd_bn: float = 0.0
-    data_source: str = "FMP"
-
-
-class FinancialModel(BaseModel):
-    company_name: str
-    capex_estimate_usd_mn: float = Field(ge=0)
-    opex_annual_usd_mn: float = Field(ge=0)
-    revenue_projections: list[RevenueProjection] = Field(
-        min_length=3, description="3-year revenue projections (low/base/high)"
+class FinancialReport(BaseModel):
+    investment_scenarios: list[InvestmentScenario] = Field(
+        min_length=2, max_length=3,
+        description="2-3 investment scenarios (Horizon 1 / 2 / 3)"
     )
-    roi_estimate_pct: float
-    payback_period_years: float = Field(ge=0)
-    npv_usd_mn: float
-    irr_pct: float
-    comparable_firms: list[ComparableFirm] = Field(
-        default_factory=list, min_length=2
+    cost_of_inaction: str = Field(
+        description="Specific financial exposure: fines, revenue loss, attrition"
     )
-    assumptions: list[str] = Field(
-        min_length=3, description="Key modelling assumptions"
+    recommended_scenario: str
+    recommended_budget: str
+    revenue_protection: str = Field(
+        description="Estimated $ revenue protected by proactive investment"
     )
-    sensitivity_notes: str = Field(
-        min_length=50, description="Key sensitivities and scenario flags"
+    key_financial_drivers: list[str] = Field(
+        min_length=2,
+        description="Specific financial levers with quantified impact"
     )
-    crm_data_used: bool = Field(
-        default=False, description="True if CRM company context informed the model"
+    payback_period: str
+    financial_risk_rating: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    sensitivity_factors: list[str] = Field(
+        min_length=1,
+        description="Factors that could improve or worsen ROI"
     )
-
-
-# ── Competitor Analysis ────────────────────────────────────────────────────────
-
-
-class FiveForce(BaseModel):
-    force: Literal[
-        "supplier_power",
-        "buyer_power",
-        "competitive_rivalry",
-        "threat_of_substitution",
-        "threat_of_new_entry",
-    ]
-    score: int = Field(ge=1, le=10, description="Intensity 1=low, 10=high")
-    rationale: str = Field(min_length=30)
-    key_factors: list[str] = Field(min_length=1)
-
-
-class CompetitorProfile(BaseModel):
-    name: str
-    hq_country: str = ""
-    revenue_usd_bn: float = 0.0
-    market_share_pct: float = Field(ge=0.0, le=100.0, default=0.0)
-    strengths: list[str] = Field(min_length=1)
-    weaknesses: list[str] = Field(min_length=1)
-    strategic_moves: list[str] = Field(default_factory=list)
-    threat_level: Literal["low", "medium", "high", "critical"] = "medium"
-    watchlist_sourced: bool = Field(
-        default=False, description="True if from n8n competitor watchlist cache"
+    confidence_score: int = Field(ge=0, le=100, default=79)
+    cfo_recommendation: str = Field(
+        description="Single sentence investment recommendation with financial justification"
     )
-
-
-class CompetitorBrief(BaseModel):
-    company_name: str
-    industry: str
-    five_forces: list[FiveForce] = Field(
-        min_length=5,
-        max_length=5,
-        description="Exactly 5 Porter forces required",
-    )
-    top_competitors: list[CompetitorProfile] = Field(min_length=2, max_length=8)
-    strategic_white_space: list[str] = Field(
-        min_length=1, description="Uncontested opportunity areas"
-    )
-    competitive_moat_assessment: str = Field(min_length=80)
-    sources: list[str] = Field(default_factory=list)
-
-    @field_validator("five_forces")
-    @classmethod
-    def exactly_five_forces(cls, v: list[FiveForce]) -> list[FiveForce]:
-        force_names = {f.force for f in v}
-        required = {
-            "supplier_power",
-            "buyer_power",
-            "competitive_rivalry",
-            "threat_of_substitution",
-            "threat_of_new_entry",
-        }
-        missing = required - force_names
-        if missing:
-            raise ValueError(f"Missing Five Forces: {missing}")
-        return v
 
 
 # ── Synthesis ─────────────────────────────────────────────────────────────────
+# Dissertation: Balanced Scorecard + McKinsey 7-S + Strategic Roadmapping
+
+class RoadmapPhase(BaseModel):
+    phase: str = Field(description="e.g. Phase 1: Foundation (0–12 months)")
+    focus: str
+    key_actions: list[str] = Field(min_length=1)
+    investment: str = Field(description="e.g. $6m")
+    success_metric: str = Field(description="Measurable KPI for phase completion")
 
 
-class StrategicOption(BaseModel):
-    rank: int = Field(ge=1)
-    title: str
-    description: str = Field(min_length=50)
-    pros: list[str] = Field(min_length=1)
-    cons: list[str] = Field(min_length=1)
-    estimated_investment_usd_mn: float = 0.0
-    time_to_value_months: int = Field(ge=1)
-    recommended: bool = False
+class BalancedScorecard(BaseModel):
+    financial: str = Field(description="Financial perspective: key metric and target")
+    customer: str = Field(description="Customer/client trust perspective")
+    internal_process: str = Field(description="Internal process perspective")
+    learning_growth: str = Field(description="People and innovation perspective")
 
 
-class NextStep(BaseModel):
-    priority: int = Field(ge=1, le=5)
-    action: str
-    owner_function: str = Field(
-        description="Responsible business function e.g. Strategy, CFO, Legal"
-    )
-    timeline_weeks: int = Field(ge=1)
-    dependencies: list[str] = Field(default_factory=list)
-
-
-class StrategicBrief(BaseModel):
-    company_name: str
-    query_summary: str
+class SynthesisReport(BaseModel):
     executive_summary: str = Field(
-        min_length=200, description="Board-ready executive summary"
-    )
-    recommendation: str = Field(
         min_length=100,
-        description="Primary recommended course of action",
+        description="2-3 sentences: problem, findings, recommendation. Board-level precision."
     )
-    strategic_options: list[StrategicOption] = Field(min_length=2)
-    risk_summary: str = Field(min_length=80)
-    financial_summary: str = Field(min_length=80)
-    next_steps: list[NextStep] = Field(
-        min_length=3, description="Minimum 3 actionable next steps"
+    strategic_imperatives: list[str] = Field(
+        min_length=2,
+        description="Specific, urgent, named actions with strategic rationale"
     )
-    confidence_score: float = Field(ge=0.0, le=10.0)
-    data_quality_score: float = Field(ge=0.0, le=10.0)
-    sources_count: int = Field(ge=0)
-    caveats: list[str] = Field(default_factory=list)
-    memory_delta: str = Field(
-        default="",
-        description="Delta vs prior ASIS recommendations (if Mem0 returned context)",
+    roadmap: list[RoadmapPhase] = Field(
+        min_length=2, max_length=3,
+        description="Phased strategic roadmap (0-12mo, 12-30mo, 30-60mo)"
     )
-    agents_used: list[str] = Field(default_factory=list)
-    total_tokens: int = Field(ge=0, default=0)
+    balanced_scorecard: BalancedScorecard
+    success_metrics: list[str] = Field(
+        min_length=2,
+        description="KPI: metric name, baseline, target, timeline"
+    )
+    decision_recommendation: Literal["PROCEED", "DEFER", "REJECT", "CONDITIONAL"]
+    overall_confidence: int = Field(ge=0, le=100, default=82)
+    board_narrative: str = Field(
+        description="Single unforgettable sentence that frames the strategic imperative"
+    )
+    dissertation_contribution: str = Field(
+        description="One sentence articulating how this multi-agent output advances AI-driven strategy theory"
+    )
+
+
+# Legacy alias — kept so _persist_results in analysis.py can store to DB unchanged
+StrategicBrief = SynthesisReport

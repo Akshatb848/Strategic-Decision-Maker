@@ -23,7 +23,9 @@ logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 _SSECallback = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
-# OpenAI-compatible API — endpoint is appended to settings.llm_base_url at runtime
+# Global semaphore — max 2 concurrent LLM calls to respect Groq free-tier rate limits
+# (30 req/min, ~6000 tokens/min: burst from 5 parallel agents would exceed this)
+_LLM_SEMAPHORE = asyncio.Semaphore(2)
 
 
 class BaseAgent(ABC):
@@ -190,29 +192,50 @@ class BaseAgent(ABC):
             ],
         }
 
-        async with httpx.AsyncClient(timeout=self._settings.agent_timeout_seconds) as client:
-            resp = await client.post(url, headers=headers, json=payload)
+        # Rate-limit-aware retry loop — handles Groq 429 with exponential backoff
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            async with _LLM_SEMAPHORE:
+                async with httpx.AsyncClient(timeout=self._settings.agent_timeout_seconds) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
 
-        if not resp.is_success:
-            try:
-                error_body = resp.json()
-            except Exception:
-                error_body = resp.text
-            logger.error(
-                "llm_api_error",
-                agent=self.name,
-                status_code=resp.status_code,
-                model=_model,
-                url=url,
-                error=error_body,
-            )
-            resp.raise_for_status()
+            if resp.status_code == 429:
+                wait_sec = min(20 * (2 ** attempt), 120)  # 20s, 40s, 80s, 120s
+                logger.warning(
+                    "llm_rate_limited",
+                    agent=self.name,
+                    attempt=attempt + 1,
+                    wait_sec=wait_sec,
+                    model=_model,
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(wait_sec)
+                    continue
+                # All retries exhausted
+                resp.raise_for_status()
 
-        data = resp.json()
-        content: str = data["choices"][0]["message"]["content"]
-        usage = data.get("usage", {})
-        total_tokens: int = int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0))
-        return content, total_tokens
+            if not resp.is_success:
+                try:
+                    error_body = resp.json()
+                except Exception:
+                    error_body = resp.text
+                logger.error(
+                    "llm_api_error",
+                    agent=self.name,
+                    status_code=resp.status_code,
+                    model=_model,
+                    url=url,
+                    error=error_body,
+                )
+                resp.raise_for_status()
+
+            data = resp.json()
+            content: str = data["choices"][0]["message"]["content"]
+            usage = data.get("usage", {})
+            total_tokens: int = int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0))
+            return content, total_tokens
+
+        raise RuntimeError(f"{self.name}: exceeded max LLM retry attempts due to rate limiting")
 
     async def _call_llm_json(
         self,

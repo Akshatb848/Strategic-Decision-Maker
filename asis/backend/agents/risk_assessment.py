@@ -1,12 +1,7 @@
 """
 ASIS v3.0 — Risk Assessment Agent.
-Geopolitical, regulatory, operational, reputational, financial, and cyber risk evaluation.
-Outputs a scored risk register.
-
-Data sources (in priority order):
-  1. GDELT cache — pre-loaded by n8n workflow into state metadata
-  2. NewsAPI (NewsFeedMCP) — fallback for recent event coverage
-  3. Tavily web search (WebSearchMCP) — regulatory and operational risk research
+Dissertation: COSO ERM 2017 + ISO 31000 + NIST CSF 2.0.
+Severity = Likelihood × Impact × Velocity, normalised to 100.
 """
 from __future__ import annotations
 
@@ -17,83 +12,82 @@ from asis.backend.config.logging import get_logger
 from asis.backend.graph.state import AgentState
 from asis.backend.mcp.news_feed import NewsFeedMCP
 from asis.backend.mcp.web_search import WebSearchMCP
-from asis.backend.schemas.agent_outputs import RiskRegister
+from asis.backend.schemas.agent_outputs import RiskReport
 from .base_agent import BaseAgent
 
 logger = get_logger(__name__)
 
+MASTER_PROMPT = """\
+You are a specialist agent within ASIS (Autonomous Strategic Intelligence System). \
+CRITICAL: return ONLY valid parseable JSON. No prose, no markdown, no backticks. \
+Ground every finding in real-world enterprise context.\
+"""
+
 SYSTEM_PROMPT = """\
-You are a Chief Risk Officer with deep expertise in cross-border MNC operations,
-geopolitical risk intelligence (GDELT, Oxford Analytica calibre), and enterprise
-risk management frameworks (ISO 31000, COSO ERM).
+You are the ASIS Risk Assessment Agent — a Chief Risk Officer-level analyst with expertise in \
+enterprise risk management. Apply COSO ERM 2017 to build a structured risk register.
 
-You are building a comprehensive risk register for a multinational corporation making
-a significant strategic decision. Your output will be reviewed by the board risk committee.
+Severity score = (Likelihood_weight × Impact_weight × Velocity_weight) normalised to 100:
+- Likelihood: High=3, Medium=2, Low=1
+- Impact: Critical=4, High=3, Medium=2, Low=1
+- Velocity: Immediate=3, Near-term=2, Long-term=1
 
-## Your mandate
-Produce a complete, scored risk register across ALL six risk dimensions. This register
-feeds the synthesis agent's strategic brief and directly shapes the recommendation.
-
-## Mandatory requirements
-1. **Coverage**: Include at minimum 3 risk items spanning at least 3 different categories
-   (geopolitical, regulatory, operational, financial, reputational, cyber).
-2. **Scoring rigor**: Score EVERY risk on:
-   - severity (1-10): business impact if the risk materialises
-   - likelihood (1-10): probability of occurrence within relevant time horizon
-   - risk_score: severity × likelihood (range 1.0-100.0, allow rounding)
-3. **Mitigations**: Every risk MUST have at least 2 concrete, actionable mitigation strategies.
-   Mitigations must be specific to the company's context — not generic platitudes.
-4. **Time horizons**: Classify each risk as immediate (<6mo), short_term (6mo-1yr),
-   medium_term (1-3yr), or long_term (3yr+).
-5. **GDELT sourcing**: If GDELT cache data is provided, use it as the primary source for
-   geopolitical and conflict-related risks. Mark gdelt_sourced=true for those risks.
-6. **Top risks**: Identify the 1-3 highest risk_score items in top_risk_ids.
-7. **Executive summary**: Write 150+ words summarising the overall risk picture,
-   risk tolerance implications, and the single most urgent mitigation action.
-8. **No fabrication**: If specific event data is unavailable, use known structural risk factors
-   for the sector/geography and state the basis clearly.
-
-## Risk category definitions
-- geopolitical: Trade wars, sanctions, political instability, border disputes, regime change
-- regulatory: Licensing, compliance mandates, data localisation, antitrust, sector reform
-- operational: Supply chain, technology failure, talent, process, third-party dependency
-- financial: FX, liquidity, credit, commodity price, interest rate, valuation risk
-- reputational: Brand damage, ESG, social media, leadership controversy, customer trust
-- cyber: Data breach, ransomware, IP theft, critical infrastructure attack, AI adversarial
-
-## Output format
-Return valid JSON ONLY — no preamble, no markdown fences.
-The JSON must exactly match the RiskRegister schema:
-
+Return ONLY a JSON object matching this schema:
 {
-  "company_name": "string",
-  "assessment_scope": "string — what strategic decision or market is being assessed",
-  "risk_items": [
+  "risk_register": [
     {
-      "risk_id": "string (e.g. geopolitical_us_china_tariffs)",
-      "category": "geopolitical|regulatory|operational|financial|reputational|cyber",
-      "title": "string (concise risk title)",
-      "description": "string (min 50 chars — explain the risk mechanism and business impact)",
-      "severity": integer 1-10,
-      "likelihood": integer 1-10,
-      "risk_score": float (severity × likelihood, 1.0-100.0),
-      "mitigations": ["specific mitigation 1", "specific mitigation 2"],
-      "time_horizon": "immediate|short_term|medium_term|long_term",
-      "gdelt_sourced": true|false
+      "risk": "Specific named risk (not generic)",
+      "category": "Regulatory",
+      "likelihood": "High",
+      "impact": "High",
+      "velocity": "Near-term",
+      "severity_score": 88,
+      "owner": "Chief Compliance Officer",
+      "current_control": "Existing control mechanism"
+    },
+    {
+      "risk": "Specific named risk",
+      "category": "Cyber",
+      "likelihood": "High",
+      "impact": "High",
+      "velocity": "Immediate",
+      "severity_score": 84,
+      "owner": "Chief Information Security Officer",
+      "current_control": "Existing control mechanism"
+    },
+    {
+      "risk": "Specific named risk",
+      "category": "Talent",
+      "likelihood": "Medium",
+      "impact": "High",
+      "velocity": "Near-term",
+      "severity_score": 72,
+      "owner": "Chief People Officer",
+      "current_control": "Existing control mechanism"
     }
   ],
-  "overall_risk_level": "low|moderate|high|critical",
-  "executive_risk_summary": "string (150+ word executive summary)",
-  "top_risk_ids": ["risk_id_1", "risk_id_2"]
-}
+  "critical_risks": [
+    "Top risk requiring board attention — with consequence",
+    "Second critical risk — with consequence"
+  ],
+  "mitigation_strategies": [
+    "Strategy 1: specific action, timeline, expected risk reduction %",
+    "Strategy 2: specific action, timeline, expected risk reduction %",
+    "Strategy 3: specific action, timeline, expected risk reduction %"
+  ],
+  "residual_risk_level": "MEDIUM",
+  "risk_appetite_alignment": "Statement assessing alignment with stated risk appetite",
+  "framework_used": "COSO ERM 2017 + NIST CSF 2.0",
+  "confidence_score": 79,
+  "board_escalation_required": true,
+  "escalation_rationale": "Specific reason why board-level decision is needed"
+}\
 """
 
 
 class RiskAssessmentAgent(BaseAgent):
-    """Agent 3 — Risk Assessment. GDELT cache + NewsAPI fallback + Tavily for regulatory."""
-
     name = "risk_assessment"
-    description = "Geopolitical, regulatory, operational, financial, reputational, and cyber risk register."
+    description = "COSO ERM risk register: severity scoring, mitigation strategies, board escalation."
 
     def __init__(self) -> None:
         super().__init__()
@@ -110,103 +104,46 @@ class RiskAssessmentAgent(BaseAgent):
         target_market = context.get("target_market", "")
         geography = context.get("geography", "")
         company_name = context.get("company_name") or context.get("name", "")
+        location = target_market or geography
 
-        # ── Step 1: Read GDELT cache from metadata (pre-loaded by n8n) ─────────
-        await self._log(state, "info", f"[RISK ASSESSMENT] Checking GDELT geopolitical intelligence cache for {geography or sector}...")
+        # GDELT cache
         gdelt_data = metadata.get("gdelt_cache", {})
-        gdelt_context = ""
         gdelt_available = bool(gdelt_data)
-
+        gdelt_section = ""
         if gdelt_available:
-            gdelt_context = (
-                "## GDELT Geopolitical Intelligence Cache (from n8n pre-load):\n"
-                + json.dumps(gdelt_data, indent=2)[:3000]
-                + "\n"
-            )
-            await self._log(state, "info", f"[RISK ASSESSMENT] GDELT cache hit — {len(gdelt_data)} geopolitical signals loaded")
-            logger.info(
-                "risk_assessment_gdelt_hit",
-                company=company_name,
-                geography=geography,
-            )
+            gdelt_section = "## GDELT Geopolitical Intelligence:\n" + json.dumps(gdelt_data, indent=2)[:2000] + "\n\n"
+            await self._log(state, "info", f"[RISK ASSESSMENT] GDELT cache hit — geopolitical signals loaded")
         else:
-            gdelt_context = (
-                "## GDELT Cache: Not available — using live news feeds as fallback.\n"
-            )
-            await self._log(state, "info", "[RISK ASSESSMENT] No GDELT cache — falling back to live NewsAPI feed...")
-            logger.info(
-                "risk_assessment_gdelt_miss",
-                company=company_name,
-                geography=geography,
-            )
+            await self._log(state, "info", f"[RISK ASSESSMENT] Checking GDELT cache for {location}... (not available, using live feeds)")
 
-        # ── Step 2: NewsFeedMCP fallback for recent risk events ────────────────
-        await self._log(state, "info", f"[RISK ASSESSMENT] Scanning recent news for geopolitical and regulatory risk signals ({target_market or geography})...")
-        news_query = (
-            f"{target_market or geography} {sector} political risk regulatory sanctions "
-            f"compliance 2024 2025"
+        await self._log(state, "info", f"[RISK ASSESSMENT] Scanning news for political, regulatory, and cyber risk signals ({location})...")
+        news_results = await self._news_feed.fetch(
+            f"{location} {sector} political risk regulatory sanctions compliance 2025", max_results=5,
         )
-        news_results = await self._news_feed.fetch(news_query, max_results=5)
 
-        # ── Step 3: Tavily for regulatory/operational risk research ────────────
-        await self._log(state, "info", f"[RISK ASSESSMENT] Querying Tavily for regulatory, operational, and cyber risk landscape ({sector})...")
-        reg_query = (
-            f"{target_market or geography} {sector} operational risk compliance regulations "
-            f"data privacy cyber security 2024"
+        await self._log(state, "info", f"[RISK ASSESSMENT] Querying Tavily for operational and regulatory risk research...")
+        web_results = await self._web_search.search(
+            f"{location} {sector} compliance regulations cyber security operational risk 2025", max_results=5,
         )
-        web_results = await self._web_search.search(reg_query, max_results=5)
 
-        # ── Step 4: Build objective from TaskPlan ─────────────────────────────
-        objective = _get_objective(task_plan, self.name)
+        objective = task_plan.get("agent_assignments", {}).get(self.name, (
+            "Build COSO ERM 2017 risk register across all risk categories with NIST CSF scoring."
+        ))
+        await self._log(state, "info", "[RISK ASSESSMENT] Calling LLM — building COSO ERM risk register (Regulatory, Cyber, Talent, Financial, Reputational, Geopolitical)...")
 
-        # ── Step 5: Assemble LLM prompt ───────────────────────────────────────
-        await self._log(state, "info", f"[RISK ASSESSMENT] Calling LLM — building risk register across 6 dimensions (geopolitical, regulatory, operational, financial, reputational, cyber)...")
         user_message = (
-            f"Strategic Query: {query}\n\n"
+            f"Orchestrator assignment: {objective}\nProblem: {query}\n\n"
             f"Company Context:\n{json.dumps(context, indent=2)}\n\n"
-            f"Agent Objective: {objective}\n\n"
-            f"{gdelt_context}\n"
-            f"## Live News Feed (NewsAPI fallback):\n{news_results}\n\n"
-            f"## Regulatory & Operational Risk Research (Tavily):\n{web_results}\n\n"
-            "Produce the RiskRegister JSON now. "
-            "Ensure minimum 3 risk items across at least 3 different categories. "
-            f"Mark gdelt_sourced=true for any risks drawn directly from the GDELT cache. "
-            f"Company name is: {company_name or 'as specified in context'}."
+            f"{gdelt_section}"
+            f"## Live News Feed:\n{news_results}\n\n"
+            f"## Regulatory Risk Research (Tavily):\n{web_results}\n\n"
+            f"Build risk register for {company_name} in {sector} / {location}. Return RiskReport JSON now."
         )
 
-        # ── Step 6: LLM call ───────────────────────────────────────────────────
-        register, tokens = await self._call_llm_json(
-            SYSTEM_PROMPT,
-            user_message,
-            RiskRegister,
-        )
-
-        # ── Step 7: Update state ───────────────────────────────────────────────
+        report, tokens = await self._call_llm_json(f"{MASTER_PROMPT}\n\n{SYSTEM_PROMPT}", user_message, RiskReport)
         meta = self._accumulate_tokens(state, tokens)
         meta["gdelt_available"] = gdelt_available
 
-        await self._log(state, "info", f"[RISK ASSESSMENT] Risk register complete — {len(register.risk_items)} risks identified | Overall level: {register.overall_risk_level.upper()} | Top risks: {', '.join(register.top_risk_ids[:2])}")
-        logger.info(
-            "risk_assessment_complete",
-            company=register.company_name,
-            overall_risk_level=register.overall_risk_level,
-            risk_count=len(register.risk_items),
-            top_risks=register.top_risk_ids,
-            tokens=tokens,
-        )
-
-        return {
-            **state,
-            "risk_register": register.model_dump(),
-            "metadata": meta,
-        }
-
-
-def _get_objective(task_plan: dict[str, Any], agent_name: str) -> str:
-    for task in task_plan.get("subtasks", []):
-        if task.get("agent") == agent_name:
-            return task.get("objective", "")
-    return (
-        "Conduct a comprehensive risk assessment across all six risk dimensions: "
-        "geopolitical, regulatory, operational, financial, reputational, and cyber."
-    )
+        await self._log(state, "info", f"[RISK ASSESSMENT] Complete — {len(report.risk_register)} risks | Residual level: {report.residual_risk_level} | Board escalation: {report.board_escalation_required}")
+        logger.info("risk_assessment_complete", company=company_name, risk_count=len(report.risk_register), tokens=tokens)
+        return {**state, "risk_register": report.model_dump(), "metadata": meta}
