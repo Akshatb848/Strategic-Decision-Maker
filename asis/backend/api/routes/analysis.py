@@ -37,7 +37,7 @@ from ...db import (
 from ...db.session import AsyncSessionLocal
 from ...graph.asis_graph import asis_graph
 from ...graph.state import AgentState
-from ..auth import get_current_user_id
+from ..auth import get_current_user_id, get_current_user_id_sse
 from ..schemas import (
     AnalysisDetail,
     AgentRunSummary,
@@ -386,7 +386,7 @@ async def get_analysis(
 )
 async def stream_analysis(
     analysis_id: uuid.UUID,
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user_id: uuid.UUID = Depends(get_current_user_id_sse),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """

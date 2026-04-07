@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { slideUp, fadeIn } from "@/lib/animations";
-import { getAnalysis, type AnalysisDetail, type StrategicBrief } from "@/lib/api";
+import { getAnalysis, getToken, type AnalysisDetail, type StrategicBrief } from "@/lib/api";
 import { AgentTimeline } from "@/components/AgentTimeline";
 import { StrategyBrief } from "@/components/StrategyBrief";
 import { StatusBadge } from "@/components/ui/Badge";
@@ -77,8 +77,10 @@ export default function AnalysisDetailPage() {
       })
       .finally(() => setLoading(false));
 
-    // Try SSE stream for live agent_log events
-    const streamUrl = `${apiBase}/analysis/${id}/stream`;
+    // Try SSE stream for live agent events.
+    // EventSource cannot send custom headers — pass JWT as ?token= query param.
+    const jwt = getToken();
+    const streamUrl = `${apiBase}/analysis/${id}/stream${jwt ? `?token=${encodeURIComponent(jwt)}` : ""}`;
     try {
       const es = new EventSource(streamUrl, { withCredentials: true });
       sseRef.current = es;

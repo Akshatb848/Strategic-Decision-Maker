@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -72,3 +72,38 @@ async def get_current_user_id(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID in token"
         ) from exc
+
+
+_bearer_scheme_optional = HTTPBearer(auto_error=False)
+
+
+async def get_current_user_id_sse(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme_optional),
+    token: Optional[str] = Query(default=None, description="JWT for EventSource (cannot send headers)"),
+) -> uuid.UUID:
+    """
+    SSE-compatible auth dependency.
+    Accepts JWT from Authorization header OR ?token= query param.
+    EventSource (browser API) cannot send custom headers — use ?token=<jwt>.
+    """
+    raw = None
+    if credentials:
+        raw = credentials.credentials
+    elif token:
+        raw = token
+
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = decode_token(raw)
+    user_id_str = payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    try:
+        return uuid.UUID(user_id_str)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID in token") from exc
