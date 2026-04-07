@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -54,6 +55,20 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def run_schema_migrations() -> None:
+    """
+    Idempotent schema migrations — safe to run on every startup.
+    Uses ADD COLUMN IF NOT EXISTS so it's a no-op when columns already exist.
+    """
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)")
+        )
+        await conn.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization VARCHAR(255)")
+        )
 
 
 async def dispose_db() -> None:

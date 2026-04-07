@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { slideRight, staggerContainer } from "@/lib/animations";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard,
   PlusCircle,
   FileBarChart2,
-  Settings,
   Zap,
+  LogOut,
 } from "lucide-react";
 
 interface NavItem {
@@ -36,8 +37,28 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+function userInitials(user: { email: string; full_name?: string | null }): string {
+  if (user.full_name) {
+    const parts = user.full_name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return user.email.slice(0, 2).toUpperCase();
+}
+
+function roleLabel(role: string): string {
+  return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, logout } = useAuth();
+
+  function handleLogout() {
+    logout();
+    router.replace("/login");
+  }
 
   return (
     <nav
@@ -175,42 +196,120 @@ export function Sidebar() {
         })}
       </motion.div>
 
-      {/* Bottom: Settings */}
+      {/* Bottom: User profile + logout */}
       <div
         style={{
           padding: "12px 8px",
           borderTop: "1px solid var(--border)",
         }}
       >
-        <Link
-          href="/settings"
+        {user && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              padding: "8px 10px",
+              borderRadius: "var(--radius-md)",
+              marginBottom: 4,
+              backgroundColor: "var(--bg-elevated)",
+            }}
+          >
+            {/* Avatar */}
+            <div
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: "50%",
+                backgroundColor: "var(--accent)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                fontSize: 11,
+                fontWeight: 700,
+                color: "white",
+                letterSpacing: "0.02em",
+              }}
+            >
+              {userInitials(user)}
+            </div>
+
+            {/* Info */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--text-primary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {user.full_name ?? user.email.split("@")[0]}
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-tertiary)",
+                  marginTop: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    padding: "1px 5px",
+                    borderRadius: 3,
+                    backgroundColor: "var(--accent-dim)",
+                    color: "var(--accent)",
+                    fontWeight: 600,
+                    fontSize: 9,
+                    letterSpacing: "0.03em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {roleLabel(user.role)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Logout button */}
+        <button
+          type="button"
+          onClick={handleLogout}
           style={{
             display: "flex",
             alignItems: "center",
             gap: 10,
-            padding: "8px 10px",
+            padding: "7px 10px",
             borderRadius: "var(--radius-md)",
+            width: "100%",
             fontSize: 13,
             color: "var(--text-tertiary)",
-            textDecoration: "none",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
             transition: "all var(--transition-fast)",
+            textAlign: "left",
           }}
           onMouseEnter={(e) => {
-            (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
-              "var(--bg-elevated)";
-            (e.currentTarget as HTMLAnchorElement).style.color =
-              "var(--text-secondary)";
+            (e.currentTarget as HTMLButtonElement).style.backgroundColor = "rgba(239,68,68,0.08)";
+            (e.currentTarget as HTMLButtonElement).style.color = "var(--danger)";
           }}
           onMouseLeave={(e) => {
-            (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
-              "transparent";
-            (e.currentTarget as HTMLAnchorElement).style.color =
-              "var(--text-tertiary)";
+            (e.currentTarget as HTMLButtonElement).style.backgroundColor = "transparent";
+            (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)";
           }}
         >
-          <Settings size={16} />
-          <span>Settings</span>
-        </Link>
+          <LogOut size={15} style={{ flexShrink: 0 }} />
+          <span>Sign out</span>
+        </button>
       </div>
     </nav>
   );

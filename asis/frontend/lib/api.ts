@@ -127,6 +127,16 @@ export interface TokenResponse {
   expires_in: number;
 }
 
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: string;
+  full_name: string | null;
+  organization: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;
@@ -204,11 +214,20 @@ export async function login(
   });
 }
 
-export async function register(email: string, password: string): Promise<void> {
-  await apiFetch("/auth/register", {
+export async function register(
+  email: string,
+  password: string,
+  full_name?: string,
+  organization?: string
+): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, full_name: full_name || null, organization: organization || null }),
   });
+}
+
+export async function getCurrentUser(): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/auth/me");
 }
 
 // ── Analysis endpoints ────────────────────────────────────────────────────────

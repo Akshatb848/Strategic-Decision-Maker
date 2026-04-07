@@ -8,7 +8,7 @@ from .models import (
     Report,
     User,
 )
-from .session import AsyncSessionLocal, get_db, init_db, dispose_db, engine
+from .session import AsyncSessionLocal, get_db, init_db, run_schema_migrations, dispose_db, engine
 
 __all__ = [
     "Analysis",
@@ -22,6 +22,7 @@ __all__ = [
     "AsyncSessionLocal",
     "get_db",
     "init_db",
+    "run_schema_migrations",
     "dispose_db",
     "engine",
 ]

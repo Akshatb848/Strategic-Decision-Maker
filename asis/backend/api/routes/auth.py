@@ -29,6 +29,18 @@ settings = get_settings()
 _DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
+def _user_to_response(user: User) -> UserResponse:
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        full_name=user.full_name,
+        organization=user.organization,
+        is_active=user.is_active,
+        created_at=user.created_at,
+    )
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest,
@@ -46,17 +58,14 @@ async def register(
         tenant_id=_DEFAULT_TENANT_ID,
         email=body.email.lower().strip(),
         hashed_password=hash_password(body.password),
+        full_name=body.full_name.strip() if body.full_name else None,
+        organization=body.organization.strip() if body.organization else None,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
 
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        created_at=user.created_at,
-    )
+    return _user_to_response(user)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -96,9 +105,4 @@ async def me(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        created_at=user.created_at,
-    )
+    return _user_to_response(user)

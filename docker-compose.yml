@@ -120,6 +120,7 @@ services:
       MARKET_INTEL_MODEL: "llama-3.3-70b-versatile"
       SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
       CLAUDE_MAX_TOKENS: "4000"
+      JWT_EXPIRE_MINUTES: "10080"
     depends_on:
       postgres:
         condition: service_healthy

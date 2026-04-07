@@ -67,6 +67,8 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     email: str
     password: str = Field(..., min_length=8)
+    full_name: Optional[str] = None
+    organization: Optional[str] = None
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -81,6 +83,9 @@ class TokenResponse(BaseModel):
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
+    role: str
+    full_name: Optional[str] = None
+    organization: Optional[str] = None
     is_active: bool
     created_at: datetime
 

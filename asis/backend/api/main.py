@@ -32,7 +32,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from ..config import configure_logging, get_logger, get_settings
-from ..db.session import dispose_db, init_db
+from ..db.session import dispose_db, init_db, run_schema_migrations
 from .routes import analysis_router, auth_router, health_router, reports_router
 from .routes.webhooks import router as webhooks_router
 from .routes.knowledge import router as knowledge_router
@@ -72,13 +72,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except ImportError:
             logger.warning("otel_packages_not_installed")
 
-    # 3. Database (create tables in non-production)
+    # 3. Database — create tables (non-production) + always run idempotent migrations
     if settings.environment != "production":
         try:
             await init_db()
             logger.info("db_tables_initialised", environment=settings.environment)
         except Exception as exc:
             logger.warning("db_init_skipped", error=str(exc))
+
+    try:
+        await run_schema_migrations()
+        logger.info("db_schema_migrations_complete")
+    except Exception as exc:
+        logger.warning("db_schema_migrations_skipped", error=str(exc))
 
     logger.info(
         "asis_started",

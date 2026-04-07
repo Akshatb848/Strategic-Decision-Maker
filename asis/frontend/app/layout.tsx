@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { TopBar } from "@/components/layout/TopBar";
-import { PageShell } from "@/components/layout/PageShell";
+import { ClientRootLayout } from "@/components/ClientRootLayout";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -44,23 +42,7 @@ export default function RootLayout({
           WebkitFontSmoothing: "antialiased",
         }}
       >
-        <div style={{ display: "flex", minHeight: "100vh" }}>
-          <Sidebar />
-          {/* Main content offset by sidebar width */}
-          <div
-            style={{
-              marginLeft: 220,
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              minHeight: "100vh",
-              background: "var(--bg-base)",
-            }}
-          >
-            <TopBar />
-            <PageShell>{children}</PageShell>
-          </div>
-        </div>
+        <ClientRootLayout>{children}</ClientRootLayout>
       </body>
     </html>
   );
