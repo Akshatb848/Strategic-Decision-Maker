@@ -247,7 +247,7 @@ export default function AnalysisDetailPage() {
                 onClick={() => setTimelineCollapsed((c) => !c)}
                 style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "8px 14px", cursor: "pointer", color: "var(--text-secondary)", fontSize: 12, fontWeight: 500, width: "100%", justifyContent: "space-between" }}
               >
-                <span>Pipeline Summary — {detail.agent_runs.filter((r) => r.status === "completed").length}/{detail.agent_runs.length} agents · {detail.execution_time_ms ? `${(detail.execution_time_ms / 1000).toFixed(1)}s` : "—"}</span>
+                <span>Pipeline Summary — {(detail.agent_runs ?? []).filter((r) => r.status === "completed").length}/{(detail.agent_runs ?? []).length} agents · {detail.execution_time_ms ? `${(detail.execution_time_ms / 1000).toFixed(1)}s` : "—"}</span>
                 {timelineCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
               </button>
               <AnimatePresence>

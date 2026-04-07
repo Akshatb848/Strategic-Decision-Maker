@@ -52,7 +52,7 @@ function progressFromStatus(run: AgentRunSummary | undefined): number {
 }
 
 export function AgentTimeline({ agentRuns, status, executionTimeMs }: Props) {
-  const byName = Object.fromEntries(agentRuns.map((r) => [r.agent_name, r]));
+  const byName = Object.fromEntries((agentRuns ?? []).map((r) => [r.agent_name, r]));
 
   return (
     <Card padding="none">

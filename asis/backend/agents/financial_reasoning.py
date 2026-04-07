@@ -99,7 +99,12 @@ class FinancialReasoningAgent(BaseAgent):
         company_name = context.get("company_name") or context.get("name", "")
 
         await self._log(state, "info", f"[FINANCIAL REASONING] Fetching sector peer financial data from FMP — {sector}...")
-        fmp_peers = await self._financial_data.get_sector_overview(sector)
+        try:
+            fmp_peers = await self._financial_data.get_sector_overview(sector)
+        except Exception as fmp_exc:
+            # FMP API unavailable (403/network) — proceed without external data
+            logger.warning("fmp_skipped", sector=sector, error=str(fmp_exc)[:120])
+            fmp_peers = f"FMP data unavailable — use industry benchmarks for {sector} sector."
 
         crm_peers = context.get("peer_companies", [])
         crm_section = ""
