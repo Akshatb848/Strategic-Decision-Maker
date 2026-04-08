@@ -68,14 +68,17 @@ services:
     ports:
       - "5678:5678"
     environment:
+      # Database
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
       DB_POSTGRESDB_PORT: 5432
       DB_POSTGRESDB_DATABASE: asis
       DB_POSTGRESDB_USER: asis
       DB_POSTGRESDB_PASSWORD: asis
+      # Redis (queue mode)
       QUEUE_BULL_REDIS_HOST: redis
       QUEUE_BULL_REDIS_PORT: 6379
+      # n8n core
       N8N_BASIC_AUTH_ACTIVE: "true"
       N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
       N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
@@ -83,15 +86,65 @@ services:
       N8N_HOST: 0.0.0.0
       N8N_PORT: 5678
       N8N_PROTOCOL: http
-      GENERIC_TIMEZONE: UTC
-      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-}
+      GENERIC_TIMEZONE: Asia/Kolkata
+      # Encryption key — keeps credentials stable across restarts
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-changeme-n8n-encryption-key-32c}
+      # Execution mode — regular (no separate worker needed)
+      EXECUTIONS_MODE: regular
+      N8N_SKIP_WEBHOOK_DEREGISTRATION_SHUTDOWN: "true"
+      # ── ASIS integration env vars (used in workflow expressions via $env.*) ──
+      # Backend URL (internal docker network — workflows POST here)
+      ASIS_API_URL: http://backend:8000
+      # HMAC secret — must match N8N_WEBHOOK_SECRET in backend .env
+      ASIS_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-changeme-n8n-secret-32chars-min}
+      # Public n8n URL — used as callback base in WF01/WF03/WF04
+      N8N_WEBHOOK_BASE_URL: http://34.172.33.24:5678
+      # Default company context for scheduled runs (WF01, WF07)
+      ASIS_DEFAULT_COMPANY: ${ASIS_DEFAULT_COMPANY:-Acme Corp}
+      ASIS_DEFAULT_SECTOR: ${ASIS_DEFAULT_SECTOR:-technology}
+      ASIS_DEFAULT_GEOGRAPHY: ${ASIS_DEFAULT_GEOGRAPHY:-India}
+      ASIS_DEFAULT_TENANT: "00000000-0000-0000-0000-000000000001"
+      # External API keys used by n8n workflow nodes
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend:
+        condition: service_healthy
     volumes:
-      - ./asis/n8n/workflows:/home/node/.n8n/workflows:ro
+      - n8n_data:/home/node/.n8n
+      - ./asis/n8n/workflows:/workflows:ro
+    restart: always
+
+  # ── LLM Proxy ─────────────────────────────────────────────────────────────────
+  # LiteLLM routes each agent's model alias to the right provider (SiliconFlow).
+  # Agents call http://litellm:4000 — LiteLLM handles retries, rate limiting, fallback.
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    environment:
+      # SiliconFlow key — sign up free at siliconflow.cn/en → API Keys
+      # Hosts: GLM-4.5-Air, Qwen3-235B-A22B, DeepSeek-V3, Llama 3.1 8B, Qwen2.5-72B
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      # Groq fallback key (optional — existing gsk_... key works here too)
+      GROQ_API_KEY: ${LLM_API_KEY:-}
+      # LiteLLM master key — agents authenticate to the proxy with this value
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-asis-litellm-master-key-32c}
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "4"]
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health/liveliness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   # ── Application Services ──────────────────────────────────────────────────────
 
@@ -111,17 +164,21 @@ services:
       ENVIRONMENT: production
       LOG_LEVEL: INFO
       ALLOWED_ORIGINS: "http://34.172.33.24:3000"
-      # LLM backend — set LLM_API_KEY=gsk_... in .env (Groq free tier)
-      # Sign up free at groq.com → API Keys
-      LLM_BASE_URL: "https://api.groq.com/openai/v1"
-      CLAUDE_MODEL: "llama-3.3-70b-versatile"
-      CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
-      ORCHESTRATOR_MODEL: "llama-3.1-8b-instant"
-      MARKET_INTEL_MODEL: "llama-3.3-70b-versatile"
-      RISK_MODEL: "deepseek-r1-distill-llama-70b"
-      FINANCIAL_MODEL_NAME: "deepseek-r1-distill-llama-70b"
-      COMPETITOR_MODEL: "llama-3.3-70b-versatile"
-      SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
+      # ── LLM routing via LiteLLM proxy ──────────────────────────────────────
+      # All agents call the LiteLLM proxy; it routes each model alias to SiliconFlow.
+      # Set SILICONFLOW_API_KEY in .env (free at siliconflow.cn/en → API Keys)
+      LLM_BASE_URL: "http://litellm:4000"
+      LLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-asis-litellm-master-key-32c}
+      LITELLM_PROXY_URL: "http://litellm:4000"
+      # Per-agent model aliases (must match model_name in litellm_config.yaml)
+      CLAUDE_MODEL: "deepseek-v3-strategic"
+      CLAUDE_HAIKU_MODEL: "llama31-8b-synthesis"
+      ORCHESTRATOR_MODEL: "glm45-air-orchestrator"
+      MARKET_INTEL_MODEL: "qwen3-235b-market-intel"
+      RISK_MODEL: "deepseek-v3-strategic"
+      FINANCIAL_MODEL_NAME: "deepseek-v3-strategic"
+      COMPETITOR_MODEL: "deepseek-v3-strategic"
+      SYNTHESIS_MODEL: "llama31-8b-synthesis"
       CLAUDE_MAX_TOKENS: "6000"
       JWT_EXPIRE_MINUTES: "10080"
     depends_on:
@@ -131,6 +188,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      litellm:
+        condition: service_healthy
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')\" 2>/dev/null || exit 1"]
@@ -163,20 +222,24 @@ services:
       LANGFUSE_HOST: http://langfuse:3000
       ENVIRONMENT: production
       LOG_LEVEL: INFO
-      LLM_BASE_URL: "https://api.groq.com/openai/v1"
-      CLAUDE_MODEL: "llama-3.3-70b-versatile"
-      CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
-      ORCHESTRATOR_MODEL: "llama-3.1-8b-instant"
-      MARKET_INTEL_MODEL: "llama-3.3-70b-versatile"
-      RISK_MODEL: "deepseek-r1-distill-llama-70b"
-      FINANCIAL_MODEL_NAME: "deepseek-r1-distill-llama-70b"
-      COMPETITOR_MODEL: "llama-3.3-70b-versatile"
-      SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
+      LLM_BASE_URL: "http://litellm:4000"
+      LLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-asis-litellm-master-key-32c}
+      LITELLM_PROXY_URL: "http://litellm:4000"
+      CLAUDE_MODEL: "deepseek-v3-strategic"
+      CLAUDE_HAIKU_MODEL: "llama31-8b-synthesis"
+      ORCHESTRATOR_MODEL: "glm45-air-orchestrator"
+      MARKET_INTEL_MODEL: "qwen3-235b-market-intel"
+      RISK_MODEL: "deepseek-v3-strategic"
+      FINANCIAL_MODEL_NAME: "deepseek-v3-strategic"
+      COMPETITOR_MODEL: "deepseek-v3-strategic"
+      SYNTHESIS_MODEL: "llama31-8b-synthesis"
       CLAUDE_MAX_TOKENS: "6000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      litellm:
         condition: service_healthy
     restart: always
 
@@ -184,3 +247,4 @@ volumes:
   postgres_data:
   redis_data:
   qdrant_data:
+  n8n_data:

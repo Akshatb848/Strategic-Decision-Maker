@@ -23,12 +23,6 @@
         "assignments": {
           "assignments": [
             {
-              "id": "query",
-              "name": "query",
-              "value": "Provide a comprehensive strategic intelligence briefing for {{ $json.company_name }} covering: (1) key market developments in the past 7 days, (2) competitive landscape shifts, (3) emerging risks and opportunities, and (4) recommended strategic actions for this week.",
-              "type": "string"
-            },
-            {
               "id": "company_name",
               "name": "company_name",
               "value": "={{ $env.ASIS_DEFAULT_COMPANY }}",
@@ -45,22 +39,26 @@
               "name": "geography",
               "value": "={{ $env.ASIS_DEFAULT_GEOGRAPHY }}",
               "type": "string"
-            },
-            {
-              "id": "workflow_id",
-              "name": "workflow_id",
-              "value": "WF01_scheduled_intelligence",
-              "type": "string"
             }
           ]
         },
         "options": {}
       },
-      "id": "set-query-template",
-      "name": "Set Query Template",
+      "id": "set-context",
+      "name": "Set Company Context",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.3,
       "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the exact JSON body and compute HMAC over it.\n// This ensures the signature matches what the backend verifies against the raw body.\nconst item = $input.item.json;\n\nconst body = {\n  workflow_id: 'WF01_scheduled_intelligence',\n  workflow_name: 'Scheduled Intelligence Run',\n  query: `Provide a comprehensive strategic intelligence briefing for ${item.company_name} covering: (1) key market developments in the past 7 days, (2) competitive landscape shifts, (3) emerging risks and opportunities, and (4) recommended strategic actions for this week.`,\n  company_context: {\n    company_name: item.company_name,\n    sector: item.sector,\n    geography: item.geography\n  },\n  options: {\n    query_type: 'full_brief',\n    enable_rag: true,\n    enable_memory: true,\n    run_baseline: false,\n    run_evaluation: true\n  },\n  tenant_id: $env.ASIS_DEFAULT_TENANT || '00000000-0000-0000-0000-000000000001',\n  callback_url: ($env.N8N_WEBHOOK_BASE_URL || '') + '/webhook/asis-completion'\n};\n\nconst bodyStr = JSON.stringify(body);\nconst secret = $env.ASIS_WEBHOOK_SECRET || '';\nconst crypto = require('crypto');\nconst sig = 'sha256=' + crypto.createHmac('sha256', secret).update(bodyStr).digest('hex');\n\nreturn [{ json: { body_str: bodyStr, signature: sig } }];"
+      },
+      "id": "build-request",
+      "name": "Build Request + Sign",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
     },
     {
       "parameters": {
@@ -75,25 +73,27 @@
             },
             {
               "name": "X-N8N-Signature",
-              "value": "={{ 'sha256=' + $crypto.hmac('sha256', JSON.stringify($json.body), $env.ASIS_WEBHOOK_SECRET, 'hex') }}"
+              "value": "={{ $json.signature }}"
             }
           ]
         },
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": []
-        },
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"workflow_id\": \"{{ $json.workflow_id }}\",\n  \"workflow_name\": \"Scheduled Intelligence Run\",\n  \"query\": \"{{ $json.query }}\",\n  \"company_context\": {\n    \"company_name\": \"{{ $json.company_name }}\",\n    \"sector\": \"{{ $json.sector }}\",\n    \"geography\": \"{{ $json.geography }}\"\n  },\n  \"options\": {\n    \"query_type\": \"full_brief\",\n    \"enable_rag\": true,\n    \"enable_memory\": true,\n    \"run_baseline\": false,\n    \"run_evaluation\": true\n  },\n  \"tenant_id\": \"{{ $env.ASIS_DEFAULT_TENANT }}\",\n  \"callback_url\": \"{{ $env.N8N_WEBHOOK_BASE_URL }}/webhook/asis-completion\"\n}",
+        "specifyBody": "string",
+        "body": "={{ $json.body_str }}",
         "options": {
-          "timeout": 30000
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
         }
       },
       "id": "post-to-asis",
       "name": "POST to ASIS Webhook",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [680, 300]
+      "position": [900, 300]
     },
     {
       "parameters": {
@@ -122,18 +122,7 @@
       "name": "Check Queued",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [900, 300]
-    },
-    {
-      "parameters": {
-        "message": "ASIS Scheduled Run Failed\n\nWorkflow: WF01 Scheduled Intelligence\nStatus: {{ $json.status }}\nError: {{ $json.detail || 'Unknown error' }}\nTime: {{ $now.toISOString() }}",
-        "otherOptions": {}
-      },
-      "id": "error-log",
-      "name": "Log Error",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [1120, 440]
+      "position": [1120, 300]
     },
     {
       "parameters": {
@@ -144,7 +133,18 @@
       "name": "Log Success",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1120, 180]
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "message": "ASIS Scheduled Run Failed\n\nWorkflow: WF01 Scheduled Intelligence\nStatus: {{ $json.status }}\nError: {{ $json.detail || 'Unknown error' }}\nTime: {{ $now.toISOString() }}",
+        "otherOptions": {}
+      },
+      "id": "error-log",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1340, 420]
     }
   ],
   "connections": {
@@ -152,14 +152,25 @@
       "main": [
         [
           {
-            "node": "Set Query Template",
+            "node": "Set Company Context",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Set Query Template": {
+    "Set Company Context": {
+      "main": [
+        [
+          {
+            "node": "Build Request + Sign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Request + Sign": {
       "main": [
         [
           {
@@ -218,5 +229,5 @@
   ],
   "triggerCount": 0,
   "updatedAt": "2024-01-01T00:00:00.000Z",
-  "versionId": "v3.0.0"
+  "versionId": "v4.0.0"
 }

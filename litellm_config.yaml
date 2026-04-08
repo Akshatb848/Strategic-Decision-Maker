@@ -1,20 +1,114 @@
+# ── ASIS LiteLLM Proxy Configuration ─────────────────────────────────────────
+# Production model routing: each ASIS agent uses the optimal LLM via SiliconFlow.
+# SiliconFlow hosts all recommended models under one OpenAI-compatible API.
+# Get your free API key at: https://siliconflow.cn/en → API Keys
+#
+# ┌──────────────────────────┬─────────────────────────┬────────────────────────────┐
+# │ ASIS Agent               │ Model                   │ SiliconFlow ID             │
+# ├──────────────────────────┼─────────────────────────┼────────────────────────────┤
+# │ Orchestrator             │ GLM-4.5-Air             │ THUDM/GLM-4.5-Air          │
+# │ Market Intelligence      │ Qwen3-235B-A22B         │ Qwen/Qwen3-235B-A22B       │
+# │ Risk Assessment          │ DeepSeek-V3 (Strategic) │ deepseek-ai/DeepSeek-V3    │
+# │ Financial Reasoning      │ DeepSeek-V3 (Strategic) │ deepseek-ai/DeepSeek-V3    │
+# │ Competitor Analysis      │ DeepSeek-V3 (Strategic) │ deepseek-ai/DeepSeek-V3    │
+# │ Synthesis (fast)         │ Llama 3.1 8B            │ meta-llama/Meta-Llama-      │
+# │                          │                         │ 3.1-8B-Instruct            │
+# │ Document RAG (128K ctx)  │ Qwen2.5-72B             │ Qwen/Qwen2.5-72B-Instruct  │
+# └──────────────────────────┴─────────────────────────┴────────────────────────────┘
+
 model_list:
-  - model_name: claude-sonnet-4-5
-    litellm_params:
-      model: anthropic/claude-sonnet-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
 
-  - model_name: claude-haiku-4-5
+  # ── 1. Orchestrator: GLM-4.5-Air ─────────────────────────────────────────────
+  # Agent-optimized model from Zhipu AI — best for structured query decomposition,
+  # MECE problem framing, and routing decisions (Minto Pyramid Principle).
+  - model_name: glm45-air-orchestrator
     litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openai/THUDM/GLM-4.5-Air
+      api_base: https://api.siliconflow.cn/v1
+      api_key: os.environ/SILICONFLOW_API_KEY
+    model_info:
+      max_tokens: 4096
+      mode: chat
+      supports_function_calling: true
 
-  - model_name: text-embedding-3-small
+  # ── 2. Market Intelligence: Qwen3-235B-A22B ──────────────────────────────────
+  # 235B MoE model — state-of-the-art for multi-domain research and long context.
+  # Best for: PESTLE analysis, Porter's Five Forces, regulatory intelligence,
+  # TAM/SAM/SOM sizing, and named competitor/regulatory citation requirements.
+  - model_name: qwen3-235b-market-intel
     litellm_params:
-      model: openai/text-embedding-3-small
-      api_key: os.environ/OPENAI_API_KEY
+      model: openai/Qwen/Qwen3-235B-A22B
+      api_base: https://api.siliconflow.cn/v1
+      api_key: os.environ/SILICONFLOW_API_KEY
+    model_info:
+      max_tokens: 8192
+      mode: chat
 
+  # ── 3. Strategic Analyzer: DeepSeek-V3 ───────────────────────────────────────
+  # Used by: Risk Assessment, Financial Reasoning, Competitor Analysis.
+  # Deep chain-of-thought reasoning delivers McKinsey-level analytical depth.
+  # COSO ERM 2017 risk severity, NPV/IRR/payback arithmetic, Porter gap analysis.
+  - model_name: deepseek-v3-strategic
+    litellm_params:
+      model: openai/deepseek-ai/DeepSeek-V3
+      api_base: https://api.siliconflow.cn/v1
+      api_key: os.environ/SILICONFLOW_API_KEY
+    model_info:
+      max_tokens: 8192
+      mode: chat
+
+  # ── 4. Synthesis / Fast: Llama 3.1 8B ────────────────────────────────────────
+  # Low-latency final brief assembly — assembles 5 specialist reports into a
+  # board-ready strategic brief (Balanced Scorecard + Three Horizons roadmap).
+  - model_name: llama31-8b-synthesis
+    litellm_params:
+      model: openai/meta-llama/Meta-Llama-3.1-8B-Instruct
+      api_base: https://api.siliconflow.cn/v1
+      api_key: os.environ/SILICONFLOW_API_KEY
+    model_info:
+      max_tokens: 6144
+      mode: chat
+
+  # ── 5. Document RAG: Qwen2.5-72B (128K context) ──────────────────────────────
+  # Used for knowledge-dense retrieval operations (Qdrant RAG chunks).
+  # Handles large context windows for market reports + regulatory documents.
+  - model_name: qwen25-72b-rag
+    litellm_params:
+      model: openai/Qwen/Qwen2.5-72B-Instruct
+      api_base: https://api.siliconflow.cn/v1
+      api_key: os.environ/SILICONFLOW_API_KEY
+    model_info:
+      max_tokens: 8192
+      mode: chat
+
+  # ── Fallback: Groq Llama 70B (if GROQ_API_KEY set + SiliconFlow unavailable) ──
+  - model_name: groq-llama70b-fallback
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+    model_info:
+      max_tokens: 4096
+      mode: chat
+
+
+# ── General settings ──────────────────────────────────────────────────────────
 general_settings:
-  # No master_key — avoids the "No connected db" error in newer LiteLLM.
-  # API keys are passed per-model above via os.environ references.
+  master_key: os.environ/LITELLM_MASTER_KEY
   drop_params: true
+  store_model_in_db: false
+
+# ── LiteLLM runtime settings ──────────────────────────────────────────────────
+litellm_settings:
+  drop_params: true
+  num_retries: 3
+  request_timeout: 120
+  turn_off_message_logging: false
+
+# ── Router settings ───────────────────────────────────────────────────────────
+router_settings:
+  num_retries: 3
+  retry_after: 5
+  timeout: 120
+  routing_strategy: "latency-based-routing"
+  allowed_fails: 2
+  cooldown_time: 60

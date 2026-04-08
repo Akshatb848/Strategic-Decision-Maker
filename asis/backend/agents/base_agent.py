@@ -23,9 +23,9 @@ logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 _SSECallback = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
-# Global semaphore — max 2 concurrent LLM calls to respect Groq free-tier rate limits
-# (30 req/min, ~6000 tokens/min: burst from 5 parallel agents would exceed this)
-_LLM_SEMAPHORE = asyncio.Semaphore(2)
+# Global semaphore — LiteLLM proxy handles per-provider rate limiting.
+# Allow up to 6 concurrent in-flight calls (one per agent + headroom).
+_LLM_SEMAPHORE = asyncio.Semaphore(6)
 
 
 class BaseAgent(ABC):
@@ -153,25 +153,42 @@ class BaseAgent(ABC):
     # ── LLM API call (OpenAI-compatible: SiliconFlow / Ollama / vLLM) ────────
 
     def _resolve_model(self, model: str | None) -> str:
-        """Return model name: explicit override → agent default → primary model."""
+        """Return model name: explicit override → agent default → primary model.
+
+        Model aliases map to LiteLLM proxy model names which route to SiliconFlow:
+          glm45-air-orchestrator   → THUDM/GLM-4.5-Air
+          qwen3-235b-market-intel  → Qwen/Qwen3-235B-A22B
+          deepseek-v3-strategic    → deepseek-ai/DeepSeek-V3
+          llama31-8b-synthesis     → meta-llama/Meta-Llama-3.1-8B-Instruct
+          qwen25-72b-rag           → Qwen/Qwen2.5-72B-Instruct
+        """
         if model:
             return model
-        # Per-agent overrides from settings
+        s = self._settings
         overrides: dict[str, str] = {
-            "orchestrator": self._settings.orchestrator_model or self._settings.claude_haiku_model,
-            "market_intelligence": self._settings.market_intel_model or self._settings.claude_model,
-            "risk_assessment": self._settings.risk_model or self._settings.claude_model,
-            "financial_reasoning": self._settings.financial_model_name or self._settings.claude_model,
-            "competitor_analysis": self._settings.competitor_model or self._settings.claude_model,
-            "synthesis": self._settings.synthesis_model or self._settings.claude_model,
+            "orchestrator":        s.orchestrator_model    or s.claude_haiku_model,
+            "market_intelligence": s.market_intel_model    or s.claude_model,
+            "risk_assessment":     s.risk_model            or s.claude_model,
+            "financial_reasoning": s.financial_model_name  or s.claude_model,
+            "competitor_analysis": s.competitor_model      or s.claude_model,
+            "synthesis":           s.synthesis_model       or s.claude_model,
         }
-        return overrides.get(self.name, self._settings.claude_model)
+        return overrides.get(self.name, s.claude_model)
 
     def _get_api_key(self) -> str:
-        """Return llm_api_key if set, otherwise fall back to anthropic_api_key."""
+        """Return the LLM auth key.
+
+        Priority:
+          1. llm_api_key  — LiteLLM master key in production (sk-asis-...)
+          2. litellm_master_key — explicit litellm key setting
+          3. anthropic_api_key — legacy fallback
+        """
         key = self._settings.llm_api_key.get_secret_value()
         if key:
             return key
+        litellm_key = self._settings.litellm_master_key.get_secret_value()
+        if litellm_key and litellm_key != "sk-asis-litellm-master-key-32c":
+            return litellm_key
         return self._settings.anthropic_api_key.get_secret_value()
 
     async def _call_llm(

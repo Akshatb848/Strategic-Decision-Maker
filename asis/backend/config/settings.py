@@ -85,50 +85,69 @@ class Settings(BaseSettings):
     )
     rate_limit_per_minute: int = 20
 
-    # ── LLM Backend (OpenAI-compatible — SiliconFlow, Ollama, etc.) ─────────
+    # ── LLM Backend ───────────────────────────────────────────────────────────
+    # Production: points to LiteLLM proxy (http://litellm:4000) which routes
+    # each agent's model alias to the right SiliconFlow model.
+    # Local dev: override to https://api.groq.com/openai/v1 + set LLM_API_KEY.
     llm_base_url: str = Field(
-        default="https://api.groq.com/openai/v1",
-        description="OpenAI-compatible API base URL (Groq / SiliconFlow / Ollama / vLLM)",
+        default="http://localhost:4000",
+        description="OpenAI-compatible API base URL — LiteLLM proxy in production",
     )
     llm_api_key: SecretStr = Field(
         default="",
-        description="API key for the LLM provider (Groq: gsk_..., or empty for Ollama)",
+        description=(
+            "LLM auth key. In production: LITELLM_MASTER_KEY (proxy key). "
+            "Local dev: Groq gsk_... or SiliconFlow key."
+        ),
     )
 
-    # Primary model — deep reasoning + strategic analysis (all agents by default)
-    # Groq free-tier: llama-3.3-70b-versatile (128K context, best quality)
-    claude_model: str = "llama-3.3-70b-versatile"
+    # SiliconFlow API key — used by LiteLLM proxy to call SiliconFlow models.
+    # Required in .env when running the LiteLLM proxy service.
+    # Free at: https://siliconflow.cn/en → API Keys
+    siliconflow_api_key: SecretStr = Field(
+        default="",
+        description="SiliconFlow API key for DeepSeek-V3, Qwen3-235B, GLM-4.5-Air access",
+    )
 
-    # Fast/lightweight model — Orchestrator classification (low latency)
-    # Groq free-tier: llama-3.1-8b-instant
-    claude_haiku_model: str = "llama-3.1-8b-instant"
+    # ── Per-agent model aliases (must match model_name in litellm_config.yaml) ──
+    # Primary strategic analysis model (DeepSeek-V3 via SiliconFlow)
+    claude_model: str = "deepseek-v3-strategic"
 
-    # Per-agent model overrides (empty string = use claude_model)
-    orchestrator_model: str = "llama-3.1-8b-instant"  # fast classification
-    market_intel_model: str = "llama-3.3-70b-versatile"
-    risk_model: str = ""           # → claude_model
-    financial_model_name: str = "" # → claude_model
-    competitor_model: str = ""     # → claude_model
-    synthesis_model: str = "llama-3.3-70b-versatile"
+    # Fast low-latency model (Llama 3.1 8B via SiliconFlow)
+    claude_haiku_model: str = "llama31-8b-synthesis"
+
+    # Orchestrator: GLM-4.5-Air — agent-optimised tool-use model
+    orchestrator_model: str = "glm45-air-orchestrator"
+    # Market Intelligence: Qwen3-235B-A22B — long-context multi-domain research
+    market_intel_model: str = "qwen3-235b-market-intel"
+    # Risk Assessment: DeepSeek-V3 — deep COSO ERM reasoning
+    risk_model: str = "deepseek-v3-strategic"
+    # Financial Reasoning: DeepSeek-V3 — NPV/IRR/payback chain-of-thought
+    financial_model_name: str = "deepseek-v3-strategic"
+    # Competitor Analysis: DeepSeek-V3 — Porter gap analysis
+    competitor_model: str = "deepseek-v3-strategic"
+    # Synthesis: Llama 3.1 8B — fast final brief assembly
+    synthesis_model: str = "llama31-8b-synthesis"
+    # Document RAG: Qwen2.5-72B — 128K context for RAG-heavy calls
+    rag_model: str = "qwen25-72b-rag"
 
     embedding_model: str = "BAAI/bge-large-en-v1.5"
-    claude_max_tokens: int = 4000
+    claude_max_tokens: int = 6000
 
     # Legacy Anthropic key — kept so existing .env files don't break.
-    # Not used when llm_api_key is set.
     anthropic_api_key: SecretStr = Field(
         default="",
         description="Legacy Anthropic API key (not used when llm_api_key is set)",
     )
 
-    # ── LiteLLM Proxy (legacy, unused) ───────────────────────────────────────
+    # ── LiteLLM Proxy ─────────────────────────────────────────────────────────
     litellm_proxy_url: str = Field(
         default="http://localhost:4000",
-        description="LiteLLM proxy base URL (unused — direct API calls now)",
+        description="LiteLLM proxy base URL — active in production (docker: http://litellm:4000)",
     )
     litellm_master_key: SecretStr = Field(
-        default="sk-litellm-master-key",
-        description="LiteLLM proxy master key (unused)",
+        default="sk-asis-litellm-master-key-32c",
+        description="LiteLLM proxy master key — set as LLM_API_KEY for agent auth",
     )
 
     # ── Qdrant (Vector Store) ─────────────────────────────────────────────────
