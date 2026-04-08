@@ -1,122 +1,69 @@
-# ── ASIS LiteLLM Proxy Configuration ─────────────────────────────────────────
-# Provider: OpenRouter (openrouter.ai) — single API key, global access,
-# aggregates 200+ models including all ASIS-recommended ones.
-# Get free API key: https://openrouter.ai → Sign In → Keys
+# ── ASIS LiteLLM Proxy Configuration (OPTIONAL — not used in default deployment)
+# ─────────────────────────────────────────────────────────────────────────────
+# By default ASIS calls Groq directly (no proxy needed — all models same endpoint).
+# Use this file ONLY if you want to:
+#   - Add paid providers alongside Groq (OpenAI, Anthropic, etc.)
+#   - Route specific agents to different providers
+#   - Enable cost tracking / budget limits across providers
 #
-# ┌──────────────────────────┬─────────────────────────┬──────────────────────────────────────┐
-# │ ASIS Agent               │ Model                   │ OpenRouter ID                        │
-# ├──────────────────────────┼─────────────────────────┼──────────────────────────────────────┤
-# │ Orchestrator             │ GLM-4-Air               │ zhipuai/glm-4-air                    │
-# │ Market Intelligence      │ Qwen3-235B-A22B         │ qwen/qwen3-235b-a22b                 │
-# │ Risk Assessment          │ DeepSeek-V3             │ deepseek/deepseek-chat               │
-# │ Financial Reasoning      │ DeepSeek-V3             │ deepseek/deepseek-chat               │
-# │ Competitor Analysis      │ DeepSeek-V3             │ deepseek/deepseek-chat               │
-# │ Synthesis (fast)         │ Llama 3.1 8B            │ meta-llama/llama-3.1-8b-instruct     │
-# │ Document RAG (128K ctx)  │ Qwen2.5-72B             │ qwen/qwen-2.5-72b-instruct           │
-# └──────────────────────────┴─────────────────────────┴──────────────────────────────────────┘
+# To activate: uncomment the litellm service in docker-compose.yml and set
+# LLM_BASE_URL=http://litellm:4000 in the backend/celery-worker environment.
+#
+# ── Current Groq model assignments (free, no credit card) ────────────────────
+# Orchestrator        → llama-3.1-8b-instant          Groq  (ultra-fast routing)
+# Market Intelligence → llama-3.3-70b-versatile        Groq  (best quality research)
+# Risk Assessment     → deepseek-r1-distill-llama-70b  Groq  (R1 chain-of-thought)
+# Financial Reasoning → deepseek-r1-distill-llama-70b  Groq  (R1 arithmetic)
+# Competitor Analysis → llama-3.3-70b-versatile        Groq  (research + analysis)
+# Synthesis           → llama-3.1-8b-instant           Groq  (fast brief assembly)
+# ─────────────────────────────────────────────────────────────────────────────
 
 model_list:
 
-  # ── 1. Orchestrator: GLM-4-Air ────────────────────────────────────────────────
-  # Zhipu AI's agent-optimised model — built for structured tool-use, MECE
-  # problem decomposition, and routing decisions (Minto Pyramid Principle).
-  - model_name: glm45-air-orchestrator
-    litellm_params:
-      model: openrouter/zhipuai/glm-4-air
-      api_key: os.environ/OPENROUTER_API_KEY
-      extra_headers:
-        HTTP-Referer: http://34.172.33.24:8000
-        X-Title: ASIS Strategic Intelligence System
-    model_info:
-      max_tokens: 4096
-      mode: chat
+  # ── Groq free tier models (current deployment) ────────────────────────────
 
-  # ── 2. Market Intelligence: Qwen3-235B-A22B ──────────────────────────────────
-  # Alibaba's 235B MoE flagship — state-of-the-art long-context multi-domain
-  # research. Best for PESTLE, Porter's Five Forces, regulatory intelligence,
-  # TAM/SAM/SOM sizing, named competitor + regulation citations.
-  - model_name: qwen3-235b-market-intel
-    litellm_params:
-      model: openrouter/qwen/qwen3-235b-a22b
-      api_key: os.environ/OPENROUTER_API_KEY
-      extra_headers:
-        HTTP-Referer: http://34.172.33.24:8000
-        X-Title: ASIS Strategic Intelligence System
-    model_info:
-      max_tokens: 8192
-      mode: chat
-
-  # ── 3. Strategic Analyzer: DeepSeek-V3 ───────────────────────────────────────
-  # Used by: Risk Assessment, Financial Reasoning, Competitor Analysis.
-  # Deep chain-of-thought delivers McKinsey-level analytical depth:
-  # COSO ERM 2017 risk severity, NPV/IRR/payback arithmetic, Porter gap analysis.
-  - model_name: deepseek-v3-strategic
-    litellm_params:
-      model: openrouter/deepseek/deepseek-chat
-      api_key: os.environ/OPENROUTER_API_KEY
-      extra_headers:
-        HTTP-Referer: http://34.172.33.24:8000
-        X-Title: ASIS Strategic Intelligence System
-    model_info:
-      max_tokens: 8192
-      mode: chat
-
-  # ── 4. Synthesis / Fast: Llama 3.1 8B ────────────────────────────────────────
-  # Low-latency final brief assembly. Assembles 5 specialist agent outputs
-  # into a board-ready brief: Balanced Scorecard + Three Horizons roadmap.
-  - model_name: llama31-8b-synthesis
-    litellm_params:
-      model: openrouter/meta-llama/llama-3.1-8b-instruct
-      api_key: os.environ/OPENROUTER_API_KEY
-      extra_headers:
-        HTTP-Referer: http://34.172.33.24:8000
-        X-Title: ASIS Strategic Intelligence System
-    model_info:
-      max_tokens: 6144
-      mode: chat
-
-  # ── 5. Document RAG: Qwen2.5-72B (128K context) ──────────────────────────────
-  # Knowledge-dense retrieval — handles large Qdrant context windows for
-  # market reports, regulatory documents, and competitor intelligence.
-  - model_name: qwen25-72b-rag
-    litellm_params:
-      model: openrouter/qwen/qwen-2.5-72b-instruct
-      api_key: os.environ/OPENROUTER_API_KEY
-      extra_headers:
-        HTTP-Referer: http://34.172.33.24:8000
-        X-Title: ASIS Strategic Intelligence System
-    model_info:
-      max_tokens: 8192
-      mode: chat
-
-  # ── Fallback: Groq Llama 70B (if GROQ_API_KEY set + OpenRouter rate-limited) ─
-  - model_name: groq-llama70b-fallback
+  - model_name: llama-3.3-70b-versatile
     litellm_params:
       model: groq/llama-3.3-70b-versatile
-      api_key: os.environ/GROQ_API_KEY
-    model_info:
-      max_tokens: 4096
-      mode: chat
+      api_key: os.environ/LLM_API_KEY
 
+  - model_name: llama-3.1-8b-instant
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/LLM_API_KEY
 
-# ── General settings ──────────────────────────────────────────────────────────
+  - model_name: deepseek-r1-distill-llama-70b
+    litellm_params:
+      model: groq/deepseek-r1-distill-llama-70b
+      api_key: os.environ/LLM_API_KEY
+
+  # ── Upgrade path: add paid providers here when ready ─────────────────────
+  # Example — DeepSeek API (cheapest frontier model, ~$0.14/1M tokens):
+  # - model_name: deepseek-v3-strategic
+  #   litellm_params:
+  #     model: deepseek/deepseek-chat
+  #     api_key: os.environ/DEEPSEEK_API_KEY
+  #
+  # Example — OpenRouter (aggregates 200+ models, pay-per-use):
+  # - model_name: qwen3-235b-market-intel
+  #   litellm_params:
+  #     model: openrouter/qwen/qwen3-235b-a22b
+  #     api_key: os.environ/OPENROUTER_API_KEY
+  #     extra_headers:
+  #       HTTP-Referer: http://34.172.33.24:8000
+  #       X-Title: ASIS Strategic Intelligence System
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   drop_params: true
-  store_model_in_db: false
 
-# ── LiteLLM runtime settings ──────────────────────────────────────────────────
 litellm_settings:
   drop_params: true
   num_retries: 3
   request_timeout: 120
-  turn_off_message_logging: false
 
-# ── Router settings ───────────────────────────────────────────────────────────
 router_settings:
   num_retries: 3
   retry_after: 5
   timeout: 120
   routing_strategy: "latency-based-routing"
-  allowed_fails: 2
-  cooldown_time: 60

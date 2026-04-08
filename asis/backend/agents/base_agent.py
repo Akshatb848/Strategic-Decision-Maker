@@ -23,9 +23,12 @@ logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 _SSECallback = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
-# Global semaphore — LiteLLM proxy handles per-provider rate limiting.
-# Allow up to 6 concurrent in-flight calls (one per agent + headroom).
-_LLM_SEMAPHORE = asyncio.Semaphore(6)
+# Global semaphore — Groq free tier: 30 req/min per model.
+# The parallel phase runs 3 agents (market + risk + competitor) simultaneously,
+# with risk and financial both using deepseek-r1 (same model slot).
+# Cap at 4 concurrent calls to stay safely within per-model rate limits.
+# The existing 429 retry loop with exponential backoff handles any spillover.
+_LLM_SEMAPHORE = asyncio.Semaphore(4)
 
 
 class BaseAgent(ABC):

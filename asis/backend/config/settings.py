@@ -85,51 +85,48 @@ class Settings(BaseSettings):
     )
     rate_limit_per_minute: int = 20
 
-    # ── LLM Backend ───────────────────────────────────────────────────────────
-    # Production: points to LiteLLM proxy (http://litellm:4000) which routes
-    # each agent's model alias to the right SiliconFlow model.
-    # Local dev: override to https://api.groq.com/openai/v1 + set LLM_API_KEY.
+    # ── LLM Backend: Groq (free, no credit card, world's fastest inference) ──
+    # Sign up at groq.com → Console → API Keys → create key (gsk_...)
+    # Set LLM_API_KEY=gsk_... in .env — that's the only required secret.
     llm_base_url: str = Field(
-        default="http://localhost:4000",
-        description="OpenAI-compatible API base URL — LiteLLM proxy in production",
+        default="https://api.groq.com/openai/v1",
+        description="OpenAI-compatible LLM endpoint. Default: Groq free tier.",
     )
     llm_api_key: SecretStr = Field(
         default="",
-        description=(
-            "LLM auth key. In production: LITELLM_MASTER_KEY (proxy key). "
-            "Local dev: Groq gsk_... or SiliconFlow key."
-        ),
+        description="Groq API key (gsk_...). Free at groq.com — no credit card.",
     )
 
-    # OpenRouter API key — used by LiteLLM proxy to route to all model providers.
-    # Required in .env when running the LiteLLM proxy service.
-    # Free at: https://openrouter.ai → Sign In → Keys (sk-or-...)
-    openrouter_api_key: SecretStr = Field(
-        default="",
-        description="OpenRouter API key — routes to DeepSeek-V3, Qwen3-235B, GLM-4-Air, Llama 3.1 8B",
-    )
+    # ── Per-agent Groq model assignments ─────────────────────────────────────
+    # Each model chosen for optimal quality within Groq's free tier.
 
-    # ── Per-agent model aliases (must match model_name in litellm_config.yaml) ──
-    # Primary strategic analysis model (DeepSeek-V3 via SiliconFlow)
-    claude_model: str = "deepseek-v3-strategic"
+    # Orchestrator: ultra-fast 8B — query routing + MECE decomposition
+    # 131K context, sub-second TTFT, ideal for structured classification tasks
+    orchestrator_model: str = "llama-3.1-8b-instant"
 
-    # Fast low-latency model (Llama 3.1 8B via SiliconFlow)
-    claude_haiku_model: str = "llama31-8b-synthesis"
+    # Market Intelligence: best-quality 70B — PESTLE + Porter's Five Forces
+    # Meta's strongest open model, excellent multi-domain research capability
+    market_intel_model: str = "llama-3.3-70b-versatile"
 
-    # Orchestrator: GLM-4.5-Air — agent-optimised tool-use model
-    orchestrator_model: str = "glm45-air-orchestrator"
-    # Market Intelligence: Qwen3-235B-A22B — long-context multi-domain research
-    market_intel_model: str = "qwen3-235b-market-intel"
-    # Risk Assessment: DeepSeek-V3 — deep COSO ERM reasoning
-    risk_model: str = "deepseek-v3-strategic"
-    # Financial Reasoning: DeepSeek-V3 — NPV/IRR/payback chain-of-thought
-    financial_model_name: str = "deepseek-v3-strategic"
-    # Competitor Analysis: DeepSeek-V3 — Porter gap analysis
-    competitor_model: str = "deepseek-v3-strategic"
-    # Synthesis: Llama 3.1 8B — fast final brief assembly
-    synthesis_model: str = "llama31-8b-synthesis"
-    # Document RAG: Qwen2.5-72B — 128K context for RAG-heavy calls
-    rag_model: str = "qwen25-72b-rag"
+    # Risk Assessment: DeepSeek R1 distill — chain-of-thought COSO ERM scoring
+    # R1 reasoning traces produce rigorous Severity = L×I×V/36×100 calculations
+    risk_model: str = "deepseek-r1-distill-llama-70b"
+
+    # Financial Reasoning: DeepSeek R1 distill — multi-step NPV/IRR/payback math
+    # R1's step-by-step arithmetic prevents hallucinated round numbers
+    financial_model_name: str = "deepseek-r1-distill-llama-70b"
+
+    # Competitor Analysis: 70B versatile — Porter gap analysis + benchmark data
+    competitor_model: str = "llama-3.3-70b-versatile"
+
+    # Synthesis: fast 8B — assembles 5 agent outputs into board-ready brief
+    # Speed > raw power here: the heavy analysis is already done upstream
+    synthesis_model: str = "llama-3.1-8b-instant"
+
+    # Primary/fallback model (used when an override resolves to empty)
+    claude_model: str = "llama-3.3-70b-versatile"
+    # Fast/fallback model
+    claude_haiku_model: str = "llama-3.1-8b-instant"
 
     embedding_model: str = "BAAI/bge-large-en-v1.5"
     claude_max_tokens: int = 6000
@@ -140,14 +137,16 @@ class Settings(BaseSettings):
         description="Legacy Anthropic API key (not used when llm_api_key is set)",
     )
 
-    # ── LiteLLM Proxy ─────────────────────────────────────────────────────────
+    # ── LiteLLM Proxy (optional — not used in default deployment) ────────────
+    # Activate to route agents to multiple providers or add paid models.
+    # See litellm_config.yaml for configuration and upgrade path.
     litellm_proxy_url: str = Field(
         default="http://localhost:4000",
-        description="LiteLLM proxy base URL — active in production (docker: http://litellm:4000)",
+        description="LiteLLM proxy URL (optional). Not active in default Groq-direct mode.",
     )
     litellm_master_key: SecretStr = Field(
-        default="sk-asis-litellm-master-key-32c",
-        description="LiteLLM proxy master key — set as LLM_API_KEY for agent auth",
+        default="",
+        description="LiteLLM proxy master key (optional). Only needed if proxy is active.",
     )
 
     # ── Qdrant (Vector Store) ─────────────────────────────────────────────────
