@@ -122,8 +122,21 @@ export default function AnalysisDetailPage() {
       es.addEventListener("analysis_complete", () => {
         addLog("Pipeline complete — loading strategic brief…", "success");
         es.close();
-        // Fetch final detail with strategic_brief
-        getAnalysis(id).then(setDetail).catch(() => null);
+        // Fetch final detail with strategic_brief — retry up to 3× in case
+        // the DB write hasn't committed yet when the SSE event fires.
+        const fetchWithRetry = (retries: number) => {
+          getAnalysis(id)
+            .then((d) => {
+              setDetail(d);
+              if (!d.strategic_brief && retries > 0) {
+                setTimeout(() => fetchWithRetry(retries - 1), 1500);
+              }
+            })
+            .catch(() => {
+              if (retries > 0) setTimeout(() => fetchWithRetry(retries - 1), 1500);
+            });
+        };
+        fetchWithRetry(3);
       });
 
       es.addEventListener("error", () => {
@@ -183,6 +196,7 @@ export default function AnalysisDetailPage() {
   }
 
   const isComplete = detail.status === "completed" && detail.strategic_brief != null;
+  const isCompletedNoBrief = detail.status === "completed" && detail.strategic_brief == null;
 
   return (
     <div style={{ padding: "28px 28px 80px", maxWidth: 1400, margin: "0 auto" }}>
@@ -209,6 +223,22 @@ export default function AnalysisDetailPage() {
           <StatusBadge status={detail.status} />
         </div>
       </div>
+
+      {/* ── Completed but no brief: surface clearly instead of stuck pipeline ── */}
+      {isCompletedNoBrief && (
+        <div style={{ padding: "32px 24px", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", backgroundColor: "var(--bg-surface)", textAlign: "center", marginBottom: 20 }}>
+          <p style={{ fontSize: 14, color: "var(--warning)", fontWeight: 600, marginBottom: 8 }}>
+            Pipeline completed but strategic brief is unavailable
+          </p>
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 16 }}>
+            The agents ran successfully but the brief could not be retrieved. This is a known issue being fixed.
+            Try running a new analysis — the fix is live on new submissions.
+          </p>
+          <Link href="/analysis/new" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", backgroundColor: "var(--accent)", color: "white", borderRadius: "var(--radius-md)", fontSize: 13, fontWeight: 500, textDecoration: "none" }}>
+            New Analysis
+          </Link>
+        </div>
+      )}
 
       {/* ── Phase 1: Running — two-column: timeline left, log right ── */}
       <AnimatePresence mode="wait">

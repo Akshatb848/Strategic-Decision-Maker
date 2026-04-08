@@ -61,13 +61,75 @@ async def run_schema_migrations() -> None:
     """
     Idempotent schema migrations — safe to run on every startup.
     Uses ADD COLUMN IF NOT EXISTS so it's a no-op when columns already exist.
+    Covers columns added by ORM model evolution that aren't in migration 0001.
     """
     async with engine.begin() as conn:
+        # ── users ─────────────────────────────────────────────────────────────
         await conn.execute(
             text("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)")
         )
         await conn.execute(
             text("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization VARCHAR(255)")
+        )
+        await conn.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) "
+                "NOT NULL DEFAULT 'analyst'"
+            )
+        )
+
+        # ── analyses ──────────────────────────────────────────────────────────
+        await conn.execute(
+            text("ALTER TABLE analyses ADD COLUMN IF NOT EXISTS tenant_id UUID")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS trigger_source VARCHAR(50) "
+                "NOT NULL DEFAULT 'api'"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS checkpoint_thread_id VARCHAR(100)"
+            )
+        )
+
+        # ── agent_runs ────────────────────────────────────────────────────────
+        await conn.execute(
+            text("ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tenant_id UUID")
+        )
+        await conn.execute(
+            text("ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cost_usd FLOAT")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS rag_hits INTEGER "
+                "NOT NULL DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS memory_hit BOOLEAN "
+                "NOT NULL DEFAULT false"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS langfuse_trace_id VARCHAR(100)"
+            )
+        )
+
+        # ── reports ───────────────────────────────────────────────────────────
+        # This is the critical one: ORM model has tenant_id NOT NULL but
+        # migration 0001 created reports without it → every Report INSERT fails.
+        await conn.execute(
+            text("ALTER TABLE reports ADD COLUMN IF NOT EXISTS tenant_id UUID")
+        )
+        await conn.execute(
+            text("ALTER TABLE reports ADD COLUMN IF NOT EXISTS exported_at TIMESTAMPTZ")
         )
 
 

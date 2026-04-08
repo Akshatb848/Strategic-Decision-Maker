@@ -262,7 +262,7 @@ async def _persist_results(
                 analysis.completed_at = datetime.now(tz=timezone.utc)
                 analysis.execution_time_ms = duration_ms
     except Exception as exc:
-        logger.error("persist_analysis_status_error", analysis_id=analysis_id, error=str(exc))
+        logger.error("persist_analysis_status_error", analysis_id=analysis_id, error=str(exc), exc_info=True)
 
     # ── Step 2: update per-agent token counts (own transaction) ───────────────
     try:
@@ -281,24 +281,80 @@ async def _persist_results(
                     agent_run.status = AgentStatus.COMPLETED
                     agent_run.tokens_used = token_usage.get(agent_name, 0)
     except Exception as exc:
-        logger.error("persist_agent_runs_error", analysis_id=analysis_id, error=str(exc))
+        logger.error("persist_agent_runs_error", analysis_id=analysis_id, error=str(exc), exc_info=True)
 
     # ── Step 3: create report record (own transaction) ────────────────────────
+    brief = state.get("strategic_brief")
+    if not brief:
+        logger.error(
+            "persist_results_no_brief",
+            analysis_id=analysis_id,
+            state_keys=list(state.keys()),
+        )
+        return
+
     try:
-        brief = state.get("strategic_brief")
-        if brief:
-            async with db.begin():
-                report = Report(
-                    analysis_id=aid,
-                    tenant_id=_DEFAULT_TENANT_ID,
-                    strategic_brief=brief,
-                    confidence_score=brief.get("overall_confidence"),
-                    data_quality_score=brief.get("overall_confidence"),
-                    sources_count=0,
-                )
-                db.add(report)
+        async with db.begin():
+            # Check if a report already exists (idempotency)
+            existing_report = await db.execute(
+                select(Report).where(Report.analysis_id == aid)
+            )
+            if existing_report.scalar_one_or_none():
+                logger.info("persist_results_report_exists", analysis_id=analysis_id)
+                return
+
+            report = Report(
+                analysis_id=aid,
+                tenant_id=_DEFAULT_TENANT_ID,
+                strategic_brief=brief,
+                confidence_score=brief.get("overall_confidence"),
+                data_quality_score=brief.get("overall_confidence"),
+                sources_count=0,
+            )
+            db.add(report)
+        logger.info(
+            "persist_results_report_saved",
+            analysis_id=analysis_id,
+            confidence=brief.get("overall_confidence"),
+        )
     except Exception as exc:
-        logger.error("persist_results_error", analysis_id=analysis_id, error=str(exc))
+        logger.error(
+            "persist_results_error",
+            analysis_id=analysis_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        # Fallback: try raw SQL insert to bypass any ORM column mapping issues
+        try:
+            async with db.begin():
+                import json as _json
+                await db.execute(
+                    text(
+                        """
+                        INSERT INTO reports
+                            (id, analysis_id, strategic_brief, confidence_score,
+                             data_quality_score, sources_count)
+                        VALUES
+                            (:id, :analysis_id, :brief::jsonb, :confidence,
+                             :confidence, 0)
+                        ON CONFLICT (analysis_id) DO NOTHING
+                        """
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "analysis_id": str(aid),
+                        "brief": _json.dumps(brief),
+                        "confidence": brief.get("overall_confidence"),
+                    },
+                )
+            logger.info("persist_results_fallback_insert_ok", analysis_id=analysis_id)
+        except Exception as fallback_exc:
+            logger.error(
+                "persist_results_fallback_error",
+                analysis_id=analysis_id,
+                error=str(fallback_exc),
+                exc_info=True,
+            )
 
 
 async def _mark_failed(analysis_id: str, error_msg: str, db: AsyncSession) -> None:
