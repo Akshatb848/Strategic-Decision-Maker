@@ -157,6 +157,48 @@ def _check_agents() -> dict[str, str]:
     return statuses
 
 
+async def _check_llm() -> str:
+    """
+    Verify the LLM endpoint and API key are functional by sending a minimal
+    chat completion request. Returns 'ok', 'auth_error', or 'unavailable'.
+    """
+    key = settings.llm_api_key.get_secret_value()
+    if not key:
+        key = settings.anthropic_api_key.get_secret_value()
+    if not key:
+        logger.error(
+            "health_llm_no_key",
+            message="LLM_API_KEY is not set — all agent LLM calls will fail with 401",
+        )
+        return "no_api_key"
+    try:
+        url = settings.llm_base_url.rstrip("/") + "/chat/completions"
+        payload = {
+            "model": settings.claude_haiku_model,
+            "max_tokens": 8,
+            "temperature": 0.0,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+        if resp.status_code == 401:
+            logger.error("health_llm_auth_error", status=401, url=url)
+            return "auth_error"
+        if resp.status_code == 429:
+            return "rate_limited"
+        if resp.is_success:
+            return "ok"
+        logger.warning("health_llm_error", status=resp.status_code)
+        return "unavailable"
+    except Exception as exc:
+        logger.warning("health_llm_error", error=str(exc))
+        return "unavailable"
+
+
 @router.get(
     "/health",
     response_model=HealthResponse,
@@ -169,28 +211,34 @@ def _check_agents() -> dict[str, str]:
 )
 async def health_check() -> HealthResponse:
     """Comprehensive health check — runs all component checks concurrently."""
-    db_status, redis_status, qdrant_status, litellm_status, langfuse_status, celery_status = (
-        await asyncio.gather(
-            _check_database(),
-            _check_redis(),
-            _check_qdrant(),
-            _check_litellm(),
-            _check_langfuse(),
-            _check_celery(),
-            return_exceptions=False,
-        )
+    (
+        db_status, redis_status, qdrant_status,
+        litellm_status, langfuse_status, celery_status, llm_status,
+    ) = await asyncio.gather(
+        _check_database(),
+        _check_redis(),
+        _check_qdrant(),
+        _check_litellm(),
+        _check_langfuse(),
+        _check_celery(),
+        _check_llm(),
+        return_exceptions=False,
     )
 
     agent_statuses = _check_agents()
 
-    # Overall status: "ok" only if db and redis are ok; others are degraded-not-down
+    # Overall status: "ok" only if db, redis, and LLM are all ok.
+    # LLM failure means analysis pipeline cannot produce output.
     critical_ok = db_status == "ok" and redis_status == "ok"
+    llm_ok = llm_status in ("ok", "rate_limited")
     agents_ok = all(v == "ready" for v in agent_statuses.values())
 
-    if critical_ok and agents_ok:
+    if critical_ok and llm_ok and agents_ok:
         overall = "ok"
     elif db_status in ("unavailable", "error"):
         overall = "down"
+    elif not llm_ok:
+        overall = "degraded"  # running but analysis will fail
     else:
         overall = "degraded"
 
@@ -204,5 +252,6 @@ async def health_check() -> HealthResponse:
         litellm=litellm_status,
         langfuse=langfuse_status,
         celery=celery_status,
+        llm=llm_status,
         agents=agent_statuses,
     )

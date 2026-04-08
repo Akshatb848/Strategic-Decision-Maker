@@ -149,4 +149,10 @@ class HealthResponse(BaseModel):
     version: str
     environment: str
     database: str
+    redis: str = "unknown"
+    qdrant: str = "unknown"
+    litellm: str = "unknown"
+    langfuse: str = "unknown"
+    celery: str = "unknown"
+    llm: str = "unknown"          # "ok" | "auth_error" | "no_api_key" | "rate_limited" | "unavailable"
     agents: dict[str, str]

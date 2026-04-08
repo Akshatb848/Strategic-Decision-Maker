@@ -86,6 +86,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("db_schema_migrations_skipped", error=str(exc))
 
+    # 4. Warn loudly if LLM key is missing — agents will 401 silently otherwise
+    llm_key = settings.llm_api_key.get_secret_value()
+    anthropic_key = settings.anthropic_api_key.get_secret_value()
+    if not llm_key and not anthropic_key:
+        logger.error(
+            "llm_api_key_missing",
+            message=(
+                "CRITICAL: LLM_API_KEY is not set. "
+                "All agent LLM calls will fail with 401. "
+                "Set LLM_API_KEY=gsk_... (Groq) in your .env file and restart."
+            ),
+        )
+    else:
+        key_preview = (llm_key or anthropic_key)[:8] + "..."
+        logger.info("llm_api_key_present", key_preview=key_preview, base_url=settings.llm_base_url)
+
     logger.info(
         "asis_started",
         version=settings.app_version,

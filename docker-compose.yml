@@ -118,8 +118,11 @@ services:
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
       ORCHESTRATOR_MODEL: "llama-3.1-8b-instant"
       MARKET_INTEL_MODEL: "llama-3.3-70b-versatile"
+      RISK_MODEL: "deepseek-r1-distill-llama-70b"
+      FINANCIAL_MODEL_NAME: "deepseek-r1-distill-llama-70b"
+      COMPETITOR_MODEL: "llama-3.3-70b-versatile"
       SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
-      CLAUDE_MAX_TOKENS: "4000"
+      CLAUDE_MAX_TOKENS: "6000"
       JWT_EXPIRE_MINUTES: "10080"
     depends_on:
       postgres:
@@ -141,7 +144,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://34.172.33.24:8000
+      NEXT_PUBLIC_API_URL: http://34.172.33.24:8000/v1
     depends_on:
       - backend
     restart: always
@@ -165,8 +168,11 @@ services:
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
       ORCHESTRATOR_MODEL: "llama-3.1-8b-instant"
       MARKET_INTEL_MODEL: "llama-3.3-70b-versatile"
+      RISK_MODEL: "deepseek-r1-distill-llama-70b"
+      FINANCIAL_MODEL_NAME: "deepseek-r1-distill-llama-70b"
+      COMPETITOR_MODEL: "llama-3.3-70b-versatile"
       SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
-      CLAUDE_MAX_TOKENS: "4000"
+      CLAUDE_MAX_TOKENS: "6000"
     depends_on:
       postgres:
         condition: service_healthy

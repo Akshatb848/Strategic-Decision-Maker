@@ -124,15 +124,25 @@ class BaseAgent(ABC):
 
         except Exception as exc:
             duration = int(time.time() * 1000) - start_ms
-            msg = f"{self.name}: {exc}"
-            logger.error("agent_error", agent=self.name, error=str(exc))
+            exc_str = str(exc)
+            # Provide actionable guidance for the most common failure modes
+            if "401" in exc_str or "Unauthorized" in exc_str or "authentication" in exc_str.lower():
+                human_msg = f"[{self.name.upper()}] LLM auth failed (401) — LLM_API_KEY is invalid or missing in .env"
+            elif "429" in exc_str or "rate" in exc_str.lower():
+                human_msg = f"[{self.name.upper()}] LLM rate-limited (429) — reduce concurrency or upgrade plan"
+            elif "no_api_key" in exc_str or not exc_str.strip():
+                human_msg = f"[{self.name.upper()}] LLM_API_KEY not set — add it to .env and restart"
+            else:
+                human_msg = f"[{self.name.upper()}] Error: {exc_str[:120]}"
+            msg = f"{self.name}: {exc_str}"
+            logger.error("agent_error", agent=self.name, error=exc_str)
             self._end_span(span, error=msg)
             await self._emit(state, "agent_error", {
                 "agent": self.name,
-                "error": str(exc),
+                "error": human_msg,
                 "duration_ms": duration,
             })
-            await self._log(state, "error", f"[{self.name.upper()}] Error: {str(exc)[:120]}")
+            await self._log(state, "error", human_msg)
             # Return ONLY the error delta — do NOT spread full state
             # (causes LangGraph INVALID_CONCURRENT_GRAPH_UPDATE in parallel nodes)
             return {"errors": [msg]}  # type: ignore[return-value]
