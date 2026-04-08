@@ -130,10 +130,10 @@ services:
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro
     environment:
-      # SiliconFlow key — sign up free at siliconflow.cn/en → API Keys
-      # Hosts: GLM-4.5-Air, Qwen3-235B-A22B, DeepSeek-V3, Llama 3.1 8B, Qwen2.5-72B
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
-      # Groq fallback key (optional — existing gsk_... key works here too)
+      # OpenRouter key — sign up free at openrouter.ai → Keys
+      # Aggregates all ASIS models: DeepSeek-V3, Qwen3-235B, GLM-4-Air, Llama 3.1 8B
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Groq fallback key (optional — existing gsk_... key from .env)
       GROQ_API_KEY: ${LLM_API_KEY:-}
       # LiteLLM master key — agents authenticate to the proxy with this value
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-asis-litellm-master-key-32c}

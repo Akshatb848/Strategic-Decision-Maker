@@ -1,87 +1,95 @@
 # ── ASIS LiteLLM Proxy Configuration ─────────────────────────────────────────
-# Production model routing: each ASIS agent uses the optimal LLM via SiliconFlow.
-# SiliconFlow hosts all recommended models under one OpenAI-compatible API.
-# Get your free API key at: https://siliconflow.cn/en → API Keys
+# Provider: OpenRouter (openrouter.ai) — single API key, global access,
+# aggregates 200+ models including all ASIS-recommended ones.
+# Get free API key: https://openrouter.ai → Sign In → Keys
 #
-# ┌──────────────────────────┬─────────────────────────┬────────────────────────────┐
-# │ ASIS Agent               │ Model                   │ SiliconFlow ID             │
-# ├──────────────────────────┼─────────────────────────┼────────────────────────────┤
-# │ Orchestrator             │ GLM-4.5-Air             │ THUDM/GLM-4.5-Air          │
-# │ Market Intelligence      │ Qwen3-235B-A22B         │ Qwen/Qwen3-235B-A22B       │
-# │ Risk Assessment          │ DeepSeek-V3 (Strategic) │ deepseek-ai/DeepSeek-V3    │
-# │ Financial Reasoning      │ DeepSeek-V3 (Strategic) │ deepseek-ai/DeepSeek-V3    │
-# │ Competitor Analysis      │ DeepSeek-V3 (Strategic) │ deepseek-ai/DeepSeek-V3    │
-# │ Synthesis (fast)         │ Llama 3.1 8B            │ meta-llama/Meta-Llama-      │
-# │                          │                         │ 3.1-8B-Instruct            │
-# │ Document RAG (128K ctx)  │ Qwen2.5-72B             │ Qwen/Qwen2.5-72B-Instruct  │
-# └──────────────────────────┴─────────────────────────┴────────────────────────────┘
+# ┌──────────────────────────┬─────────────────────────┬──────────────────────────────────────┐
+# │ ASIS Agent               │ Model                   │ OpenRouter ID                        │
+# ├──────────────────────────┼─────────────────────────┼──────────────────────────────────────┤
+# │ Orchestrator             │ GLM-4-Air               │ zhipuai/glm-4-air                    │
+# │ Market Intelligence      │ Qwen3-235B-A22B         │ qwen/qwen3-235b-a22b                 │
+# │ Risk Assessment          │ DeepSeek-V3             │ deepseek/deepseek-chat               │
+# │ Financial Reasoning      │ DeepSeek-V3             │ deepseek/deepseek-chat               │
+# │ Competitor Analysis      │ DeepSeek-V3             │ deepseek/deepseek-chat               │
+# │ Synthesis (fast)         │ Llama 3.1 8B            │ meta-llama/llama-3.1-8b-instruct     │
+# │ Document RAG (128K ctx)  │ Qwen2.5-72B             │ qwen/qwen-2.5-72b-instruct           │
+# └──────────────────────────┴─────────────────────────┴──────────────────────────────────────┘
 
 model_list:
 
-  # ── 1. Orchestrator: GLM-4.5-Air ─────────────────────────────────────────────
-  # Agent-optimized model from Zhipu AI — best for structured query decomposition,
-  # MECE problem framing, and routing decisions (Minto Pyramid Principle).
+  # ── 1. Orchestrator: GLM-4-Air ────────────────────────────────────────────────
+  # Zhipu AI's agent-optimised model — built for structured tool-use, MECE
+  # problem decomposition, and routing decisions (Minto Pyramid Principle).
   - model_name: glm45-air-orchestrator
     litellm_params:
-      model: openai/THUDM/GLM-4.5-Air
-      api_base: https://api.siliconflow.cn/v1
-      api_key: os.environ/SILICONFLOW_API_KEY
+      model: openrouter/zhipuai/glm-4-air
+      api_key: os.environ/OPENROUTER_API_KEY
+      extra_headers:
+        HTTP-Referer: http://34.172.33.24:8000
+        X-Title: ASIS Strategic Intelligence System
     model_info:
       max_tokens: 4096
       mode: chat
-      supports_function_calling: true
 
   # ── 2. Market Intelligence: Qwen3-235B-A22B ──────────────────────────────────
-  # 235B MoE model — state-of-the-art for multi-domain research and long context.
-  # Best for: PESTLE analysis, Porter's Five Forces, regulatory intelligence,
-  # TAM/SAM/SOM sizing, and named competitor/regulatory citation requirements.
+  # Alibaba's 235B MoE flagship — state-of-the-art long-context multi-domain
+  # research. Best for PESTLE, Porter's Five Forces, regulatory intelligence,
+  # TAM/SAM/SOM sizing, named competitor + regulation citations.
   - model_name: qwen3-235b-market-intel
     litellm_params:
-      model: openai/Qwen/Qwen3-235B-A22B
-      api_base: https://api.siliconflow.cn/v1
-      api_key: os.environ/SILICONFLOW_API_KEY
+      model: openrouter/qwen/qwen3-235b-a22b
+      api_key: os.environ/OPENROUTER_API_KEY
+      extra_headers:
+        HTTP-Referer: http://34.172.33.24:8000
+        X-Title: ASIS Strategic Intelligence System
     model_info:
       max_tokens: 8192
       mode: chat
 
   # ── 3. Strategic Analyzer: DeepSeek-V3 ───────────────────────────────────────
   # Used by: Risk Assessment, Financial Reasoning, Competitor Analysis.
-  # Deep chain-of-thought reasoning delivers McKinsey-level analytical depth.
+  # Deep chain-of-thought delivers McKinsey-level analytical depth:
   # COSO ERM 2017 risk severity, NPV/IRR/payback arithmetic, Porter gap analysis.
   - model_name: deepseek-v3-strategic
     litellm_params:
-      model: openai/deepseek-ai/DeepSeek-V3
-      api_base: https://api.siliconflow.cn/v1
-      api_key: os.environ/SILICONFLOW_API_KEY
+      model: openrouter/deepseek/deepseek-chat
+      api_key: os.environ/OPENROUTER_API_KEY
+      extra_headers:
+        HTTP-Referer: http://34.172.33.24:8000
+        X-Title: ASIS Strategic Intelligence System
     model_info:
       max_tokens: 8192
       mode: chat
 
   # ── 4. Synthesis / Fast: Llama 3.1 8B ────────────────────────────────────────
-  # Low-latency final brief assembly — assembles 5 specialist reports into a
-  # board-ready strategic brief (Balanced Scorecard + Three Horizons roadmap).
+  # Low-latency final brief assembly. Assembles 5 specialist agent outputs
+  # into a board-ready brief: Balanced Scorecard + Three Horizons roadmap.
   - model_name: llama31-8b-synthesis
     litellm_params:
-      model: openai/meta-llama/Meta-Llama-3.1-8B-Instruct
-      api_base: https://api.siliconflow.cn/v1
-      api_key: os.environ/SILICONFLOW_API_KEY
+      model: openrouter/meta-llama/llama-3.1-8b-instruct
+      api_key: os.environ/OPENROUTER_API_KEY
+      extra_headers:
+        HTTP-Referer: http://34.172.33.24:8000
+        X-Title: ASIS Strategic Intelligence System
     model_info:
       max_tokens: 6144
       mode: chat
 
   # ── 5. Document RAG: Qwen2.5-72B (128K context) ──────────────────────────────
-  # Used for knowledge-dense retrieval operations (Qdrant RAG chunks).
-  # Handles large context windows for market reports + regulatory documents.
+  # Knowledge-dense retrieval — handles large Qdrant context windows for
+  # market reports, regulatory documents, and competitor intelligence.
   - model_name: qwen25-72b-rag
     litellm_params:
-      model: openai/Qwen/Qwen2.5-72B-Instruct
-      api_base: https://api.siliconflow.cn/v1
-      api_key: os.environ/SILICONFLOW_API_KEY
+      model: openrouter/qwen/qwen-2.5-72b-instruct
+      api_key: os.environ/OPENROUTER_API_KEY
+      extra_headers:
+        HTTP-Referer: http://34.172.33.24:8000
+        X-Title: ASIS Strategic Intelligence System
     model_info:
       max_tokens: 8192
       mode: chat
 
-  # ── Fallback: Groq Llama 70B (if GROQ_API_KEY set + SiliconFlow unavailable) ──
+  # ── Fallback: Groq Llama 70B (if GROQ_API_KEY set + OpenRouter rate-limited) ─
   - model_name: groq-llama70b-fallback
     litellm_params:
       model: groq/llama-3.3-70b-versatile

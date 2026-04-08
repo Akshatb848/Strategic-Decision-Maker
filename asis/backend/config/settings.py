@@ -101,12 +101,12 @@ class Settings(BaseSettings):
         ),
     )
 
-    # SiliconFlow API key — used by LiteLLM proxy to call SiliconFlow models.
+    # OpenRouter API key — used by LiteLLM proxy to route to all model providers.
     # Required in .env when running the LiteLLM proxy service.
-    # Free at: https://siliconflow.cn/en → API Keys
-    siliconflow_api_key: SecretStr = Field(
+    # Free at: https://openrouter.ai → Sign In → Keys (sk-or-...)
+    openrouter_api_key: SecretStr = Field(
         default="",
-        description="SiliconFlow API key for DeepSeek-V3, Qwen3-235B, GLM-4.5-Air access",
+        description="OpenRouter API key — routes to DeepSeek-V3, Qwen3-235B, GLM-4-Air, Llama 3.1 8B",
     )
 
     # ── Per-agent model aliases (must match model_name in litellm_config.yaml) ──
