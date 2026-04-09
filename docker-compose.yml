@@ -195,12 +195,12 @@ services:
       - backend
     restart: always
     healthcheck:
-      # TCP probe — is Next.js listening on port 3000? Fast, no HTTP error codes.
-      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',3000)); s.close()\" 2>/dev/null || exit 1"]
-      interval: 15s
-      timeout: 8s
+      # wget is available in node:20-alpine (BusyBox). Follows redirects, exits 0 on any 2xx/3xx.
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:3000/ 2>/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 30s
 
   celery-worker:
     build:
