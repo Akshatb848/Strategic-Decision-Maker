@@ -153,8 +153,8 @@ services:
       FINANCIAL_MODEL_NAME: "deepseek-r1-distill-llama-70b"
       # Competitor: 70B versatile for Porter gap analysis + named benchmark data
       COMPETITOR_MODEL: "llama-3.3-70b-versatile"
-      # Synthesis: fast 8B assembles all 5 agent outputs → board-ready brief
-      SYNTHESIS_MODEL: "llama-3.1-8b-instant"
+      # Synthesis: 70B versatile — 8B consistently fails JSON validation for complex SynthesisReport schema
+      SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
       # Defaults for unresolved overrides
       CLAUDE_MODEL: "llama-3.3-70b-versatile"
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
@@ -224,7 +224,7 @@ services:
       RISK_MODEL: "deepseek-r1-distill-llama-70b"
       FINANCIAL_MODEL_NAME: "deepseek-r1-distill-llama-70b"
       COMPETITOR_MODEL: "llama-3.3-70b-versatile"
-      SYNTHESIS_MODEL: "llama-3.1-8b-instant"
+      SYNTHESIS_MODEL: "llama-3.3-70b-versatile"
       CLAUDE_MODEL: "llama-3.3-70b-versatile"
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
       CLAUDE_MAX_TOKENS: "6000"

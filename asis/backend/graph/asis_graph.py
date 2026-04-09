@@ -1,22 +1,23 @@
 """
-ASIS v3.0 — LangGraph 1.0 StateGraph.
+ASIS v4.0 — LangGraph 1.0 StateGraph.
 
-Pipeline topology
------------------
-START → orchestrator → (conditional fanout via Send) →
-    parallel: [market_intelligence, risk_assessment, competitor_analysis]
+Pipeline topology (fixed fan-in)
+---------------------------------
+START → orchestrator → parallel fanout (list return, NOT Send) →
+    parallel: subset of [market_intelligence, risk_assessment, competitor_analysis]
     (subset chosen by query_type) →
-    financial_reasoning (when needed) →
+    gather  ← explicit fan-in node; all parallel agents route here ←
+    → financial_reasoning (sequential, when needed) →
     synthesis → END
 
-Conditional routing from orchestrator based on task_plan["query_type"]:
-  risk_only     → [risk_assessment]
-  financial_only → [market_intelligence, financial_reasoning]
-  competitive    → [market_intelligence, competitor_analysis]
-  full_brief / custom → [market_intelligence, risk_assessment, competitor_analysis]
+WHY list-return instead of Send():
+  Send() creates independent channels — each parallel agent independently routes
+  financial_reasoning and synthesis, so synthesis ran 3× with only 1 specialist
+  report each time instead of all 4 combined.
 
-After parallel agents: financial_reasoning (if not financial_only already ran it),
-then synthesis.
+  Returning a list of strings from the routing function (LangGraph 1.0 supported)
+  runs those nodes in the same superstep with proper fan-in: their states are
+  merged via reducers in state.py before the next node starts.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from __future__ import annotations
 from typing import Any
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.types import Send
 
 from asis.backend.graph.state import AgentState
 from asis.backend.agents.orchestrator import OrchestratorAgent
@@ -48,27 +48,32 @@ _synthesis = SynthesisAgent()
 
 # ── Routing configuration ──────────────────────────────────────────────────────
 
-# Maps query_type → list of parallel agent node names to spawn
+# Maps query_type → list of parallel agent node names.
+# financial_reasoning is intentionally NEVER in the parallel batch — it runs
+# sequentially after gather so it always receives all specialist outputs.
 _QUERY_TYPE_PARALLEL: dict[str, list[str]] = {
     "risk_only":      ["risk_assessment"],
-    "financial_only": ["market_intelligence", "financial_reasoning"],
+    "financial_only": ["market_intelligence"],
     "competitive":    ["market_intelligence", "competitor_analysis"],
     "full_brief":     ["market_intelligence", "risk_assessment", "competitor_analysis"],
     "custom":         ["market_intelligence", "risk_assessment", "competitor_analysis"],
-    # Legacy / fallback mappings kept for compatibility
     "full":           ["market_intelligence", "risk_assessment", "competitor_analysis"],
     "market_entry":   ["market_intelligence", "risk_assessment", "competitor_analysis"],
-    "financial":      ["market_intelligence", "financial_reasoning"],
+    "financial":      ["market_intelligence"],
 }
 
-# These query types already include financial_reasoning in the parallel stage,
-# so we skip a separate sequential financial_reasoning step afterwards.
-_FINANCIAL_IN_PARALLEL: frozenset[str] = frozenset({"financial_only", "financial"})
-
-# These query types require a sequential financial_reasoning step *after* parallel.
-_NEEDS_SEQUENTIAL_FINANCIAL: frozenset[str] = frozenset({
+# Query types that require financial_reasoning after the parallel gather phase.
+_NEEDS_FINANCIAL: frozenset[str] = frozenset({
     "full_brief", "custom", "full", "market_entry",
+    "financial_only", "financial",
 })
+
+# All possible parallel node names (used for graph edge registration)
+_ALL_PARALLEL_NODES: list[str] = [
+    "market_intelligence",
+    "risk_assessment",
+    "competitor_analysis",
+]
 
 
 # ── Node functions ─────────────────────────────────────────────────────────────
@@ -97,12 +102,36 @@ async def synthesis_node(state: AgentState) -> AgentState:
     return await _synthesis.execute(state)
 
 
+async def gather_node(state: AgentState) -> dict:
+    """
+    Explicit fan-in point — all parallel agents route here via regular edges.
+
+    LangGraph invokes gather ONCE after ALL parallel agents in the current
+    superstep complete, with their outputs already merged via state reducers.
+    Returns an empty dict (no state changes) — the merged state from parallel
+    agents passes through unchanged.
+    """
+    logger.info(
+        "gather_node",
+        has_market=bool(state.get("market_report")),
+        has_risk=bool(state.get("risk_register")),
+        has_competitor=bool(state.get("competitor_brief")),
+        has_financial=bool(state.get("financial_model")),
+        analysis_id=state.get("analysis_id"),
+    )
+    return {}
+
+
 # ── Conditional edge functions ─────────────────────────────────────────────────
 
-def route_from_orchestrator(state: AgentState) -> list[Send]:
+def route_from_orchestrator(state: AgentState) -> list[str]:
     """
-    Fan-out from orchestrator using Send() for parallel execution.
-    Each Send passes the full state to the target node.
+    Fan-out from orchestrator. Returns a LIST of node names to execute in parallel.
+
+    Returning a list (not Send objects) means LangGraph runs the listed nodes
+    in the SAME superstep with proper fan-in at the gather node.
+    All parallel nodes start with the same state snapshot and their outputs
+    are merged via reducers before gather runs.
     """
     task_plan: dict[str, Any] = state.get("task_plan") or {}
     query_type: str = task_plan.get("query_type", "full_brief")
@@ -119,26 +148,31 @@ def route_from_orchestrator(state: AgentState) -> list[Send]:
         analysis_id=state.get("analysis_id"),
     )
 
-    return [Send(node, state) for node in parallel_nodes]
+    return parallel_nodes
 
 
-def route_after_parallel(state: AgentState) -> str:
+def route_from_gather(state: AgentState) -> str:
     """
-    After each parallel agent completes, decide whether to go to
-    financial_reasoning or directly to synthesis.
-
-    financial_reasoning runs sequentially (once) for full_brief / custom.
-    For risk_only and competitive, skip straight to synthesis.
-    For financial_only the financial_reasoning node already ran in parallel.
+    After gather (fan-in complete, all specialist outputs merged), decide:
+      - financial_reasoning if the query type needs financial modelling
+      - synthesis directly if financial_reasoning is not needed
     """
     task_plan: dict[str, Any] = state.get("task_plan") or {}
     query_type: str = task_plan.get("query_type", "full_brief")
 
-    # If financial_reasoning is still needed and wasn't part of the parallel batch
-    if query_type in _NEEDS_SEQUENTIAL_FINANCIAL:
-        # Only route here once — if financial_model already populated, skip
-        if not state.get("financial_model"):
-            return "financial_reasoning"
+    if query_type in _NEEDS_FINANCIAL:
+        logger.info(
+            "gather_route_financial",
+            query_type=query_type,
+            analysis_id=state.get("analysis_id"),
+        )
+        return "financial_reasoning"
+
+    logger.info(
+        "gather_route_synthesis",
+        query_type=query_type,
+        analysis_id=state.get("analysis_id"),
+    )
     return "synthesis"
 
 
@@ -151,55 +185,50 @@ def build_graph(checkpointer=None):
     Parameters
     ----------
     checkpointer : optional
-        A LangGraph checkpointer instance (e.g. AsyncPostgresSaver or MemorySaver).
-        If None, the graph runs without persistence.
-
-    Returns
-    -------
-    CompiledGraph
+        A LangGraph checkpointer instance. If None, runs without persistence.
     """
     builder = StateGraph(AgentState)
 
-    # Register nodes
+    # ── Register nodes ─────────────────────────────────────────────────────────
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("market_intelligence", market_intelligence_node)
     builder.add_node("risk_assessment", risk_assessment_node)
     builder.add_node("financial_reasoning", financial_reasoning_node)
     builder.add_node("competitor_analysis", competitor_analysis_node)
+    builder.add_node("gather", gather_node)
     builder.add_node("synthesis", synthesis_node)
 
-    # START → orchestrator
+    # ── START → orchestrator ───────────────────────────────────────────────────
     builder.add_edge(START, "orchestrator")
 
-    # orchestrator → parallel fanout (via Send)
+    # ── orchestrator → parallel fanout (list return = proper fan-in) ──────────
     builder.add_conditional_edges(
         "orchestrator",
         route_from_orchestrator,
-        # Explicit path map — all possible target node names
-        [
-            "market_intelligence",
-            "risk_assessment",
-            "financial_reasoning",
-            "competitor_analysis",
-        ],
+        # path_map: all possible parallel target node names
+        _ALL_PARALLEL_NODES,
     )
 
-    # Each parallel agent → financial_reasoning or synthesis
-    for parallel_node in ["market_intelligence", "risk_assessment", "competitor_analysis"]:
-        builder.add_conditional_edges(
-            parallel_node,
-            route_after_parallel,
-            {
-                "financial_reasoning": "financial_reasoning",
-                "synthesis": "synthesis",
-            },
-        )
+    # ── parallel agents → gather (regular edges; LangGraph fans them in) ──────
+    # gather waits for ALL nodes that were started in the parallel superstep.
+    # Nodes not started for a given query_type don't block gather.
+    for parallel_node in _ALL_PARALLEL_NODES:
+        builder.add_edge(parallel_node, "gather")
 
-    # financial_reasoning (parallel variant) → synthesis
-    # financial_reasoning (sequential) → synthesis
+    # ── gather → financial_reasoning or synthesis (once, with merged state) ───
+    builder.add_conditional_edges(
+        "gather",
+        route_from_gather,
+        {
+            "financial_reasoning": "financial_reasoning",
+            "synthesis": "synthesis",
+        },
+    )
+
+    # ── financial_reasoning → synthesis ───────────────────────────────────────
     builder.add_edge("financial_reasoning", "synthesis")
 
-    # synthesis → END
+    # ── synthesis → END ───────────────────────────────────────────────────────
     builder.add_edge("synthesis", END)
 
     compile_kwargs: dict[str, Any] = {}
@@ -212,21 +241,8 @@ def build_graph(checkpointer=None):
 async def get_graph_with_checkpointer(db_url: str):
     """
     Build and return a compiled graph backed by AsyncPostgresSaver.
-
-    The PostgresSaver is set up (schema initialised) before returning.
     Falls back to MemorySaver if postgres is unavailable.
-
-    Parameters
-    ----------
-    db_url : str
-        asyncpg-style connection URL. Automatically converted to psycopg
-        format required by AsyncPostgresSaver.
-
-    Returns
-    -------
-    CompiledGraph
     """
-    # Convert asyncpg URL → psycopg URL that AsyncPostgresSaver expects
     psycopg_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
 
     try:
