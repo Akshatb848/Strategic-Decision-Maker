@@ -113,7 +113,7 @@ services:
       redis:
         condition: service_healthy
       backend:
-        condition: service_healthy
+        condition: service_started   # service_healthy races with _check_llm timeout
     volumes:
       - n8n_data:/home/node/.n8n
       - ./asis/n8n/workflows:/workflows:ro
@@ -167,11 +167,14 @@ services:
         condition: service_started
     restart: always
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')\" 2>/dev/null || exit 1"]
+      # Simple TCP liveness probe — is port 8000 open? Much faster than urlopen /v1/health
+      # (health endpoint runs _check_llm which makes a real Groq API call; with Docker's
+      # 10s timeout that races and consistently fails. /v1/health is for monitoring only.)
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',8000)); s.close()\" 2>/dev/null || exit 1"]
       interval: 15s
-      timeout: 10s
+      timeout: 8s
       retries: 5
-      start_period: 30s
+      start_period: 40s
 
   frontend:
     image: ghcr.io/akshatb848/strategic-decision-maker/frontend:latest

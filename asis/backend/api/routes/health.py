@@ -81,19 +81,21 @@ async def _check_qdrant() -> str:
 
 
 async def _check_litellm() -> str:
-    """Return 'ok' or 'unavailable'."""
+    """Return 'ok', 'disabled', or 'unavailable'. LiteLLM is optional."""
+    # LiteLLM proxy is only used when explicitly configured; skip by default.
+    proxy = settings.litellm_proxy_url
+    if not proxy or "localhost:4000" in proxy:
+        return "disabled"
     try:
-        url = f"{settings.litellm_proxy_url.rstrip('/')}/health"
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        url = f"{proxy.rstrip('/')}/health"
+        timeout = httpx.Timeout(connect=2.0, read=3.0, write=2.0, pool=1.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(
                 url,
                 headers={"Authorization": f"Bearer {settings.litellm_master_key.get_secret_value()}"},
             )
-            if resp.status_code < 500:
-                return "ok"
-            return "unavailable"
-    except Exception as exc:
-        logger.warning("health_litellm_error", error=str(exc))
+            return "ok" if resp.status_code < 500 else "unavailable"
+    except Exception:
         return "unavailable"
 
 
@@ -114,24 +116,24 @@ async def _check_langfuse() -> str:
 
 
 async def _check_celery() -> str:
-    """Return 'ok' or 'unavailable'. Uses Celery inspect ping (non-blocking)."""
+    """Return 'ok' or 'unavailable'. Celery inspect with hard 4s wall-clock limit."""
     try:
         from celery import Celery  # type: ignore[import-untyped]
 
         celery_app = Celery(broker=settings.celery_broker_url)
-        loop = asyncio.get_event_loop()
 
         def _ping() -> Any:
-            inspect = celery_app.control.inspect(timeout=3.0)
-            result = inspect.ping()
-            return result
+            inspect = celery_app.control.inspect(timeout=2.0)
+            return inspect.ping()
 
-        result = await loop.run_in_executor(None, _ping)
-        if result:
-            return "ok"
-        return "unavailable"
-    except Exception as exc:
-        logger.warning("health_celery_error", error=str(exc))
+        loop = asyncio.get_event_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _ping),
+            timeout=4.0,
+        )
+        return "ok" if result else "unavailable"
+    except (asyncio.TimeoutError, Exception) as exc:
+        logger.warning("health_celery_error", error=str(exc)[:60])
         return "unavailable"
 
 
@@ -159,8 +161,10 @@ def _check_agents() -> dict[str, str]:
 
 async def _check_llm() -> str:
     """
-    Verify the LLM endpoint and API key are functional by sending a minimal
-    chat completion request. Returns 'ok', 'auth_error', or 'unavailable'.
+    Verify the LLM API key is set and the endpoint responds.
+    Uses a 5s connect + 5s read timeout so the entire health check
+    stays well under Docker's healthcheck timeout limit.
+    Returns 'ok' | 'auth_error' | 'no_api_key' | 'rate_limited' | 'unavailable'.
     """
     key = settings.llm_api_key.get_secret_value()
     if not key:
@@ -168,25 +172,27 @@ async def _check_llm() -> str:
     if not key:
         logger.error(
             "health_llm_no_key",
-            message="LLM_API_KEY is not set — all agent LLM calls will fail with 401",
+            message="LLM_API_KEY is not set — add LLM_API_KEY=gsk_... to .env",
         )
         return "no_api_key"
     try:
         url = settings.llm_base_url.rstrip("/") + "/chat/completions"
         payload = {
             "model": settings.claude_haiku_model,
-            "max_tokens": 8,
+            "max_tokens": 1,
             "temperature": 0.0,
-            "messages": [{"role": "user", "content": "ping"}],
+            "messages": [{"role": "user", "content": "hi"}],
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        # Tight timeout: connect=3s, read=5s — health check must finish quickly
+        timeout = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=2.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json=payload,
             )
         if resp.status_code == 401:
-            logger.error("health_llm_auth_error", status=401, url=url)
+            logger.error("health_llm_auth_error", status=401)
             return "auth_error"
         if resp.status_code == 429:
             return "rate_limited"
@@ -195,7 +201,7 @@ async def _check_llm() -> str:
         logger.warning("health_llm_error", status=resp.status_code)
         return "unavailable"
     except Exception as exc:
-        logger.warning("health_llm_error", error=str(exc))
+        logger.warning("health_llm_error", error=str(exc)[:80])
         return "unavailable"
 
 
