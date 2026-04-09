@@ -160,10 +160,9 @@ services:
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
       CLAUDE_MAX_TOKENS: "6000"
       JWT_EXPIRE_MINUTES: "10080"
-      # ── Observability (disable until Langfuse keys are configured) ─────────────
-      # To enable: create an org in the Langfuse UI (port 3001), copy the keys,
-      # then set LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY in .env and flip this.
+      # ── Force-disable optional services (override any .env values) ─────────────
       LANGFUSE_ENABLED: "false"
+      LITELLM_PROXY_URL: "http://localhost:4000"  # keeps _check_litellm → "disabled"
     depends_on:
       postgres:
         condition: service_healthy
@@ -230,6 +229,7 @@ services:
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
       CLAUDE_MAX_TOKENS: "6000"
       LANGFUSE_ENABLED: "false"
+      LITELLM_PROXY_URL: "http://localhost:4000"
     depends_on:
       postgres:
         condition: service_healthy
