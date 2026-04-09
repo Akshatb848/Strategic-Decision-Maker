@@ -11,7 +11,7 @@ Dimensions (each 0-10):
   internal_consistency — coherence across agent outputs
   overall_score        — weighted average using settings.eval_weights
 
-Model: claude_haiku_model (cheap, fast) for cost-efficient dissertation runs.
+Model: claude_haiku_model (fast 8B) via direct Groq API (same as agents).
 Returns neutral 5.0 scores on any failure rather than crashing.
 """
 
@@ -22,6 +22,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+import httpx
 
 from ..config import get_logger, get_settings
 from ..schemas.evaluation import DimensionScore, EvaluationResult
@@ -69,16 +71,19 @@ _DIMENSIONS = list(_NEUTRAL_SCORES.keys())
 
 class EvaluationEngine:
     """
-    Scores strategic brief outputs using LiteLLM (Haiku model for cost efficiency).
+    Scores strategic brief outputs via direct Groq API (fast 8B model).
 
-    All evaluation calls route through the LiteLLM proxy — never directly to Anthropic.
+    Uses the same httpx approach as BaseAgent — no litellm dependency.
     Returns neutral 5.0 scores on any failure rather than propagating exceptions.
     """
 
     def __init__(self) -> None:
-        import litellm  # type: ignore[import]
-        self._litellm = litellm
         self._model = settings.claude_haiku_model
+        self._url = settings.llm_base_url.rstrip("/") + "/chat/completions"
+        key = settings.llm_api_key.get_secret_value()
+        if not key:
+            key = settings.anthropic_api_key.get_secret_value()
+        self._api_key = key
 
     async def evaluate(
         self,
@@ -101,18 +106,25 @@ class EvaluationEngine:
 
         scores_raw: dict[str, Any] = {}
         try:
-            response = await self._litellm.acompletion(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=1000,
-                temperature=0.0,
-                api_base=settings.litellm_proxy_url,
-                api_key=settings.litellm_master_key.get_secret_value(),
-            )
-            raw_text = response.choices[0].message.content or "{}"
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    self._url,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self._model,
+                        "messages": [
+                            {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "max_tokens": 1000,
+                        "temperature": 0.0,
+                    },
+                )
+            resp.raise_for_status()
+            raw_text = resp.json()["choices"][0]["message"]["content"] or "{}"
             clean = _strip_fences(raw_text)
             scores_raw = json.loads(clean)
 

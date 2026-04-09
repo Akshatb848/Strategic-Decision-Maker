@@ -15,6 +15,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from ..config import get_logger, get_settings
 from ..db import BaselineRun
 from .engine import EvaluationEngine
@@ -60,16 +62,20 @@ Output valid JSON matching this structure:
 
 class SingleAgentBaseline:
     """
-    Runs the full strategic query through a single LiteLLM call (Haiku model).
+    Runs the full strategic query through a single Groq API call (fast 8B model).
 
     Does NOT use the multi-agent pipeline — this is the dissertation control condition.
+    Uses direct httpx (same as BaseAgent) — no litellm dependency.
     Results are scored by EvaluationEngine and stored as a BaselineRun ORM object.
     """
 
     def __init__(self) -> None:
-        import litellm  # type: ignore[import]
-        self._litellm = litellm
         self._model = settings.claude_haiku_model
+        self._url = settings.llm_base_url.rstrip("/") + "/chat/completions"
+        key = settings.llm_api_key.get_secret_value()
+        if not key:
+            key = settings.anthropic_api_key.get_secret_value()
+        self._api_key = key
         self._eval_engine = EvaluationEngine()
 
     async def run(
@@ -96,20 +102,27 @@ class SingleAgentBaseline:
         tokens_used = 0
 
         try:
-            response = await self._litellm.acompletion(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": _BASELINE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                max_tokens=settings.claude_max_tokens,
-                temperature=0.3,
-                api_base=settings.litellm_proxy_url,
-                api_key=settings.litellm_master_key.get_secret_value(),
-            )
-
-            raw_text = response.choices[0].message.content or ""
-            tokens_used = response.usage.total_tokens if response.usage else 0
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    self._url,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self._model,
+                        "messages": [
+                            {"role": "system", "content": _BASELINE_SYSTEM_PROMPT},
+                            {"role": "user", "content": user_message},
+                        ],
+                        "max_tokens": settings.claude_max_tokens,
+                        "temperature": 0.3,
+                    },
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            raw_text = data["choices"][0]["message"]["content"] or ""
+            tokens_used = data.get("usage", {}).get("total_tokens", 0)
 
             clean = raw_text.strip()
             if clean.startswith("```"):

@@ -3,16 +3,15 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-# Install build tools
+# Install build tools (needed for asyncpg, psycopg2 compilation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Layer 1: Heavy deps (litellm) — cached independently, rarely changes ──────
-COPY requirements-heavy.txt .
-RUN pip install --user --no-cache-dir --prefer-binary -r requirements-heavy.txt
-
-# ── Layer 2: App deps — changes more often but installs fast ──────────────────
+# ── Single pip install — all app deps ─────────────────────────────────────────
+# Split into two COPY+RUN pairs so Docker layer cache skips pip install
+# entirely when requirements.txt hasn't changed (fast iterative builds).
+# --prefer-binary: use pre-built wheels, never compile from source
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir --prefer-binary -r requirements.txt
 
@@ -30,7 +29,7 @@ COPY --from=builder /root/.local /home/asis/.local
 
 WORKDIR /app
 
-# Copy application code
+# Copy application code (separate layer — changes often, doesn't bust pip cache)
 COPY . /app/asis/backend/
 
 ENV PATH="/home/asis/.local/bin:$PATH" \
@@ -41,9 +40,6 @@ ENV PATH="/home/asis/.local/bin:$PATH" \
 USER asis
 
 EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')" 2>/dev/null || exit 1
 
 CMD ["uvicorn", "asis.backend.api.main:app", \
      "--host", "0.0.0.0", \
