@@ -183,8 +183,9 @@ async def _check_llm() -> str:
             "temperature": 0.0,
             "messages": [{"role": "user", "content": "hi"}],
         }
-        # Tight timeout: connect=3s, read=5s — health check must finish quickly
-        timeout = httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=2.0)
+        # Generous timeout: GCP VMs can have slow first-connect to external APIs.
+        # Still well within Docker's 30s health check timeout.
+        timeout = httpx.Timeout(connect=10.0, read=15.0, write=5.0, pool=2.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 url,

@@ -195,6 +195,13 @@ services:
     depends_on:
       - backend
     restart: always
+    healthcheck:
+      # TCP probe — is Next.js listening on port 3000? Fast, no HTTP error codes.
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',3000)); s.close()\" 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 60s
 
   celery-worker:
     build:
@@ -229,6 +236,13 @@ services:
       redis:
         condition: service_healthy
     restart: always
+    healthcheck:
+      # Check the celery worker process is alive — no HTTP server in this container.
+      test: ["CMD-SHELL", "pgrep -f 'celery.*worker' > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
   postgres_data:
