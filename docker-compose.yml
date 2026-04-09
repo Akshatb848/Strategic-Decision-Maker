@@ -54,7 +54,7 @@ services:
   # ── Observability ─────────────────────────────────────────────────────────────
 
   langfuse:
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:2  # pin to v2 — v3 requires ClickHouse which is not in our stack
     ports:
       - "3001:3000"
     environment:
