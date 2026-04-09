@@ -122,6 +122,8 @@ services:
   # ── Application Services ──────────────────────────────────────────────────────
 
   backend:
+    build:
+      context: ./asis/backend
     image: ghcr.io/akshatb848/strategic-decision-maker/backend:latest
     ports:
       - "8000:8000"
@@ -177,6 +179,10 @@ services:
       start_period: 40s
 
   frontend:
+    build:
+      context: ./asis/frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://34.172.33.24:8000/v1
     image: ghcr.io/akshatb848/strategic-decision-maker/frontend:latest
     ports:
       - "3000:3000"
@@ -187,6 +193,8 @@ services:
     restart: always
 
   celery-worker:
+    build:
+      context: ./asis/backend
     image: ghcr.io/akshatb848/strategic-decision-maker/backend:latest
     command: celery -A asis.backend.tasks.celery_app worker --loglevel=info
     env_file:
