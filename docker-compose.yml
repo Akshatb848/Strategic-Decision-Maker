@@ -160,6 +160,10 @@ services:
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
       CLAUDE_MAX_TOKENS: "6000"
       JWT_EXPIRE_MINUTES: "10080"
+      # ── Observability (disable until Langfuse keys are configured) ─────────────
+      # To enable: create an org in the Langfuse UI (port 3001), copy the keys,
+      # then set LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY in .env and flip this.
+      LANGFUSE_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy
@@ -218,6 +222,7 @@ services:
       CLAUDE_MODEL: "llama-3.3-70b-versatile"
       CLAUDE_HAIKU_MODEL: "llama-3.1-8b-instant"
       CLAUDE_MAX_TOKENS: "6000"
+      LANGFUSE_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy

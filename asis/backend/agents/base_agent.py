@@ -42,6 +42,12 @@ class BaseAgent(ABC):
     def _init_langfuse(self) -> Any:
         if not self._settings.langfuse_enabled:
             return None
+        # Skip silently when keys are absent — avoids SDK warning spam on every startup
+        if (
+            not self._settings.langfuse_public_key
+            or not self._settings.langfuse_secret_key.get_secret_value()
+        ):
+            return None
         try:
             from langfuse import Langfuse
             return Langfuse(
