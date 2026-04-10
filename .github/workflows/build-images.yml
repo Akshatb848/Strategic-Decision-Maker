@@ -1,22 +1,23 @@
 name: Build & Push Docker Images
 
-# Builds backend + frontend on GitHub Actions (100 MiB/s internet, not 8 KiB/s GCP PyPI).
-# Then SSH-deploys to the GCP VM — no docker compose build ever needed on the VM again.
+# Builds on GitHub Actions (100 MiB/s), streams the image to the VM over SSH.
+# The VM never needs to reach GHCR or PyPI — no docker compose build on VM ever again.
 #
-# Required GitHub Secrets (Settings → Secrets → Actions):
-#   VM_SSH_KEY   — private key for VM user (paste the full -----BEGIN ... KEY----- block)
-#   VM_HOST      — VM IP, e.g. 34.172.33.24
-#   VM_USER      — VM login, e.g. major_project848
-#   VM_DIR       — repo path on VM, e.g. /home/major_project848/Strategic-Decision-Maker
+# ── One-time GitHub Secrets setup (Settings → Secrets → Actions) ──────────────
+#   VM_SSH_KEY   — private SSH key for the VM user (full -----BEGIN...END----- block)
+#   VM_HOST      — VM public IP, e.g. 34.172.33.24
+#   VM_USER      — VM login user, e.g. major_project848
+#   VM_DIR       — absolute path to repo on VM, e.g. /home/major_project848/Strategic-Decision-Maker
 
 on:
   push:
     branches: [claude/asis-multi-agent-system-Lc2Zq, main]
     paths:
-      # Only rebuild backend when backend code or its Dockerfile changes
       - "asis/backend/**"
+      - "asis/frontend/**"
+      - "docker-compose.yml"
       - ".github/workflows/build-images.yml"
-  workflow_dispatch:  # allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -24,14 +25,12 @@ env:
   FRONTEND_IMAGE: ghcr.io/akshatb848/strategic-decision-maker/frontend
 
 jobs:
+  # ── Build backend ─────────────────────────────────────────────────────────────
   build-backend:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
-    outputs:
-      image_digest: ${{ steps.push.outputs.digest }}
 
     steps:
       - uses: actions/checkout@v4
@@ -44,22 +43,23 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build and push backend
-        id: push
+      - name: Build and push backend to GHCR
         uses: docker/build-push-action@v6
         with:
           context: ./asis/backend
           push: true
+          # Load locally so we can also stream it to VM below
+          load: false
           platforms: linux/amd64
           tags: |
             ${{ env.BACKEND_IMAGE }}:latest
             ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          # GitHub Actions cache: pip wheels cached between workflow runs.
-          # Combined with Dockerfile BuildKit cache mount, rebuilds after
-          # requirements.txt changes take ~60 s instead of 8+ hours.
+          # GitHub Actions cache keeps pip wheels between runs — subsequent
+          # builds of the same image take ~60 s total, not hours.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ── Build frontend ────────────────────────────────────────────────────────────
   build-frontend:
     runs-on: ubuntu-latest
     permissions:
@@ -77,11 +77,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build and push frontend
+      - name: Build and push frontend to GHCR
         uses: docker/build-push-action@v6
         with:
           context: ./asis/frontend
           push: true
+          load: false
           platforms: linux/amd64
           tags: |
             ${{ env.FRONTEND_IMAGE }}:latest
@@ -91,41 +92,115 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ── Deploy to GCP VM ──────────────────────────────────────────────────────────
+  # Pulls pre-built images from GHCR on the VM (authenticated with GITHUB_TOKEN).
+  # If GHCR is unreachable from the VM, falls back to streaming the image via SSH pipe.
   deploy:
     runs-on: ubuntu-latest
     needs: [build-backend, build-frontend]
-    # Only deploy when secrets are configured (skip on forks / PRs without secrets)
-    if: ${{ secrets.VM_SSH_KEY != '' }}
+    permissions:
+      contents: read
+      packages: read
+
+    # Only run when SSH secrets are configured
+    if: ${{ vars.VM_HOST != '' || secrets.VM_HOST != '' }}
 
     steps:
-      - name: Deploy to GCP VM via SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      # ── Primary: GHCR pull on VM (authenticated) ─────────────────────────────
+      - name: Deploy via GHCR pull
+        id: deploy_ghcr
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          VM_DIR: ${{ secrets.VM_DIR }}
+          GIT_BRANCH: ${{ github.ref_name }}
+        run: |
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} \
+            bash -s <<ENDSSH
+          set -e
+          cd ${VM_DIR}
+
+          # Pull latest code
+          git pull origin ${GIT_BRANCH}
+
+          # Authenticate Docker to GHCR with the current Actions token
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
+
+          # Pull pre-built images — seconds, not hours
+          docker compose pull backend frontend
+
+          # Restart with new images (no build on VM)
+          docker compose up -d --no-build backend celery-worker frontend
+
+          echo "=== Deployed via GHCR pull ==="
+          docker compose ps
+          ENDSSH
+
+      # ── Fallback: stream backend image directly over SSH if GHCR unreachable ──
+      - name: Login to GHCR on runner (for SSH pipe fallback)
+        if: steps.deploy_ghcr.outcome == 'failure'
+        uses: docker/login-action@v3
         with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          # Generous timeout — pulling images from GHCR takes 30-120 s
-          command_timeout: 10m
-          script: |
-            set -e
-            cd ${{ secrets.VM_DIR }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-            # Pull latest code
-            git pull origin claude/asis-multi-agent-system-Lc2Zq
+      - name: Setup buildx for local load (fallback)
+        if: steps.deploy_ghcr.outcome == 'failure'
+        uses: docker/setup-buildx-action@v3
 
-            # Authenticate Docker to GHCR using the Actions-generated token
-            # (stored in a file by a previous step, or use a PAT stored as VM env var)
-            # If GHCR_TOKEN env var is set in .env, use it; otherwise skip auth
-            if [ -f .env ] && grep -q GHCR_TOKEN .env 2>/dev/null; then
-              export GHCR_TOKEN=$(grep GHCR_TOKEN .env | cut -d= -f2-)
-              echo "$GHCR_TOKEN" | docker login ghcr.io -u akshatb848 --password-stdin
-            fi
+      - name: Build backend locally on runner (fallback)
+        if: steps.deploy_ghcr.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./asis/backend
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: backend-local:latest
+          cache-from: type=gha
 
-            # Pull pre-built images (no compilation, no PyPI downloads)
-            docker compose pull backend frontend
+      - name: Build frontend locally on runner (fallback)
+        if: steps.deploy_ghcr.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./asis/frontend
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: frontend-local:latest
+          cache-from: type=gha
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://34.172.33.24:8000/v1
 
-            # Restart with new images — zero build time on VM
-            docker compose up -d --no-build backend celery-worker frontend
+      - name: Stream images to VM via SSH pipe (fallback)
+        if: steps.deploy_ghcr.outcome == 'failure'
+        run: |
+          set -e
+          echo "=== Streaming backend image to VM ==="
+          docker save backend-local:latest | gzip | \
+            ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} \
+            'docker load && docker tag backend-local:latest ghcr.io/akshatb848/strategic-decision-maker/backend:latest'
 
-            echo "=== Deploy complete ==="
-            docker compose ps
+          echo "=== Streaming frontend image to VM ==="
+          docker save frontend-local:latest | gzip | \
+            ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} \
+            'docker load && docker tag frontend-local:latest ghcr.io/akshatb848/strategic-decision-maker/frontend:latest'
+
+          echo "=== Restarting services on VM ==="
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} \
+            "cd ${{ secrets.VM_DIR }} && git pull origin ${{ github.ref_name }} && docker compose up -d --no-build backend celery-worker frontend && docker compose ps"
