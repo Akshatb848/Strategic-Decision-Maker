@@ -1,8 +1,21 @@
 name: Build & Push Docker Images
 
+# Builds backend + frontend on GitHub Actions (100 MiB/s internet, not 8 KiB/s GCP PyPI).
+# Then SSH-deploys to the GCP VM — no docker compose build ever needed on the VM again.
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   VM_SSH_KEY   — private key for VM user (paste the full -----BEGIN ... KEY----- block)
+#   VM_HOST      — VM IP, e.g. 34.172.33.24
+#   VM_USER      — VM login, e.g. major_project848
+#   VM_DIR       — repo path on VM, e.g. /home/major_project848/Strategic-Decision-Maker
+
 on:
   push:
     branches: [claude/asis-multi-agent-system-Lc2Zq, main]
+    paths:
+      # Only rebuild backend when backend code or its Dockerfile changes
+      - "asis/backend/**"
+      - ".github/workflows/build-images.yml"
   workflow_dispatch:  # allow manual trigger from GitHub UI
 
 env:
@@ -16,6 +29,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    outputs:
+      image_digest: ${{ steps.push.outputs.digest }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,13 +44,19 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - uses: docker/build-push-action@v5
+      - name: Build and push backend
+        id: push
+        uses: docker/build-push-action@v6
         with:
           context: ./asis/backend
           push: true
+          platforms: linux/amd64
           tags: |
             ${{ env.BACKEND_IMAGE }}:latest
             ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          # GitHub Actions cache: pip wheels cached between workflow runs.
+          # Combined with Dockerfile BuildKit cache mount, rebuilds after
+          # requirements.txt changes take ~60 s instead of 8+ hours.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -42,6 +65,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -53,10 +77,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - uses: docker/build-push-action@v6
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
         with:
           context: ./asis/frontend
           push: true
+          platforms: linux/amd64
           tags: |
             ${{ env.FRONTEND_IMAGE }}:latest
             ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
@@ -64,3 +90,42 @@ jobs:
             NEXT_PUBLIC_API_URL=http://34.172.33.24:8000/v1
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    # Only deploy when secrets are configured (skip on forks / PRs without secrets)
+    if: ${{ secrets.VM_SSH_KEY != '' }}
+
+    steps:
+      - name: Deploy to GCP VM via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          # Generous timeout — pulling images from GHCR takes 30-120 s
+          command_timeout: 10m
+          script: |
+            set -e
+            cd ${{ secrets.VM_DIR }}
+
+            # Pull latest code
+            git pull origin claude/asis-multi-agent-system-Lc2Zq
+
+            # Authenticate Docker to GHCR using the Actions-generated token
+            # (stored in a file by a previous step, or use a PAT stored as VM env var)
+            # If GHCR_TOKEN env var is set in .env, use it; otherwise skip auth
+            if [ -f .env ] && grep -q GHCR_TOKEN .env 2>/dev/null; then
+              export GHCR_TOKEN=$(grep GHCR_TOKEN .env | cut -d= -f2-)
+              echo "$GHCR_TOKEN" | docker login ghcr.io -u akshatb848 --password-stdin
+            fi
+
+            # Pull pre-built images (no compilation, no PyPI downloads)
+            docker compose pull backend frontend
+
+            # Restart with new images — zero build time on VM
+            docker compose up -d --no-build backend celery-worker frontend
+
+            echo "=== Deploy complete ==="
+            docker compose ps

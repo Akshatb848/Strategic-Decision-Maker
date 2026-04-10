@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ── Stage 1: Build dependencies ───────────────────────────────────────────────
 FROM python:3.11-slim AS builder
 
@@ -9,11 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Single pip install — all app deps ─────────────────────────────────────────
-# Split into two COPY+RUN pairs so Docker layer cache skips pip install
-# entirely when requirements.txt hasn't changed (fast iterative builds).
-# --prefer-binary: use pre-built wheels, never compile from source
+# BuildKit cache mount: the pip wheel cache persists between Docker builds on
+# the same host. First build downloads packages; subsequent builds (even when
+# requirements.txt changes) use cached wheels → seconds instead of hours.
+# Never use --no-cache-dir with this approach — the cache IS the speedup.
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir --prefer-binary -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --prefer-binary -r requirements.txt
 
 # ── Stage 2: Production image ─────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
