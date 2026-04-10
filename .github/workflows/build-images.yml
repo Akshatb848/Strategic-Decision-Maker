@@ -103,7 +103,7 @@ jobs:
       packages: read
 
     # Only run when SSH secrets are configured
-    if: ${{ vars.VM_HOST != '' || secrets.VM_HOST != '' }}
+    if: ${{ secrets.VM_SSH_KEY != '' }}
 
     steps:
       - uses: actions/checkout@v4
