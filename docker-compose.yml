@@ -195,8 +195,8 @@ services:
       - backend
     restart: always
     healthcheck:
-      # wget is available in node:20-alpine (BusyBox). Follows redirects, exits 0 on any 2xx/3xx.
-      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:3000/ 2>/dev/null || exit 1"]
+      # TCP liveness — node is guaranteed in this container; avoids wget HTTP-error exit codes.
+      test: ["CMD-SHELL", "node -e \"const n=require('net').connect(3000,'localhost',()=>{n.end();process.exit(0)});n.on('error',()=>process.exit(1))\""]
       interval: 20s
       timeout: 10s
       retries: 5
@@ -237,8 +237,8 @@ services:
         condition: service_healthy
     restart: always
     healthcheck:
-      # Check the celery worker process is alive — no HTTP server in this container.
-      test: ["CMD-SHELL", "pgrep -f 'celery.*worker' > /dev/null || exit 1"]
+      # python:3.11-slim has no pgrep (no procps). Use /proc/*/cmdline via Python instead.
+      test: ["CMD-SHELL", "python3 -c \"import glob,sys;sys.exit(0 if any(b'celery' in open(f,'rb').read() for f in glob.glob('/proc/*/cmdline')) else 1)\""]
       interval: 30s
       timeout: 5s
       retries: 3
