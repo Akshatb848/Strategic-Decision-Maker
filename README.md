@@ -116,7 +116,7 @@ All variables are listed in [`.env.example`](.env.example). The main ones are:
 ```bash
 pip install -r asis/backend/requirements.txt aiosqlite
 # Schema tests run anywhere; route tests need PostgreSQL:
-export TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/asis_test
+export TEST_DATABASE_URL=postgresql+asyncpg://postgres@localhost:5432/asis_test
 export JWT_SECRET=local-test-secret-at-least-32-characters ENVIRONMENT=development
 pytest -c asis/backend/tests/pytest.ini asis/backend/tests
 ```
