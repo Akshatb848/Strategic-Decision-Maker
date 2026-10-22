@@ -19,16 +19,8 @@ name: Build & Push Docker Images
 #
 # Get <TOKEN> from: GitHub repo -> Settings -> Actions -> Runners -> New self-hosted runner -> Linux
 
+# Archived prototype: deploys only when started by hand (Actions -> Run workflow).
 on:
-  push:
-    branches:
-      - claude/asis-multi-agent-system-Lc2Zq
-      - main
-    paths:
-      - "asis/backend/**"
-      - "asis/frontend/**"
-      - "docker-compose.yml"
-      - ".github/workflows/build-images.yml"
   workflow_dispatch:
 
 env:
