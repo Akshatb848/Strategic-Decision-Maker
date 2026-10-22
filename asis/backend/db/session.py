@@ -19,12 +19,18 @@ from ..config import get_settings
 
 settings = get_settings()
 
+# SQLite (used by the test suite) does not accept QueuePool sizing arguments.
+_pool_kwargs: dict[str, Any] = (
+    {}
+    if settings.database_url.startswith("sqlite")
+    else {"pool_size": settings.db_pool_size, "max_overflow": settings.db_max_overflow}
+)
+
 engine = create_async_engine(
     settings.database_url,
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
     echo=settings.db_echo,
     pool_pre_ping=True,
+    **_pool_kwargs,
 )
 
 AsyncSessionLocal = async_sessionmaker(

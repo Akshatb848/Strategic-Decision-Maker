@@ -391,6 +391,8 @@ class AuditLog(Base):
 
 def _enable_rls_on_table(target: Any, connection: Any, **kwargs: Any) -> None:
     """Enable RLS and create tenant isolation policy after table creation."""
+    if connection.dialect.name != "postgresql":
+        return  # RLS is PostgreSQL-only; skip on SQLite (used by the test suite)
     table_name = target.name
     if table_name in ("tenants",):
         return  # Tenants table is not tenant-scoped

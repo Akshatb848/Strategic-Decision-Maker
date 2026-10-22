@@ -1,492 +1,153 @@
-# ASIS — Autonomous Strategic Intelligence System v3.0
+# Strategic Decision Maker — ASIS early prototype (v1–v4)
 
-> Board-level strategic decision intelligence for multinational corporations, powered by a multi-agent LLM pipeline with persistent memory, vector search, and automated workflows.
+**An earlier, archived iteration of ASIS: a six-agent LangGraph pipeline (FastAPI + Next.js) that turns a strategy question into a structured decision brief.**
 
-**Version:** 3.0.0 | **Stack:** Python · FastAPI · LangGraph · Next.js 14 · PostgreSQL · Redis · Qdrant · LiteLLM · n8n
+> [!IMPORTANT]
+> **This is not the maintained version.** This repository holds the first ASIS prototype, built between 3 and 10 April 2026. Development moved to **[Akshatb848/Strategic-Consultant](https://github.com/Akshatb848/Strategic-Consultant)** on 11 April 2026, which is the current, maintained ASIS: an 8-agent pipeline, a newer dashboard, demo mode and an expanded test suite. Start there. This repository is kept for its history.
 
----
+[![CI](https://github.com/Akshatb848/Strategic-Decision-Maker/actions/workflows/ci.yml/badge.svg)](https://github.com/Akshatb848/Strategic-Decision-Maker/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-Next.js%2014-black.svg)
+![Status: archived prototype](https://img.shields.io/badge/status-earlier%20prototype-lightgrey.svg)
+
+## How it relates to the other ASIS repositories
+
+| Repository | What it is | Status |
+|---|---|---|
+| [Strategic-Consultant](https://github.com/Akshatb848/Strategic-Consultant) | **Main ASIS codebase**: 8 agents, Next.js 15 dashboard, demo mode, CI | **Maintained — use this** |
+| **Strategic-Decision-Maker** (this repo) | First code iteration of ASIS (v1.0 → "v4" in commit messages), 6 LangGraph nodes | Earlier prototype, not maintained |
+| [ASIS-Base44](https://github.com/Akshatb848/ASIS-Base44) | Separate front-end-only ASIS prototype ("v5", Vite + React, April 2026) | Prototype, not maintained |
+
+## Glimpse
+
+Captured by running this repository's Next.js frontend locally (`next dev`) and screenshotting it headlessly with Playwright. No backend or LLM key was running, so these are the public pages only: no analysis was executed. Claims in the page copy, such as "under 60 seconds", are the app's own marketing text, not measured results.
+
+| Landing page | Sign-in |
+|---|---|
+| ![ASIS v3 landing page](docs/screenshots/welcome.png) | ![Sign-in page](docs/screenshots/login.png) |
+
+![The six agents as presented on the landing page](docs/screenshots/agents.png)
+
+## What it does
+
+A signed-in user submits a strategic question, for example a market-entry decision, plus company context. The backend runs a LangGraph `StateGraph`:
+
+1. **Orchestrator** breaks the question down and decides which specialist agents to run.
+2. **Market Intelligence**, **Risk Assessment** and **Competitor Analysis** run in parallel and fan in at a `gather` node.
+3. **Financial Reasoning** runs when the query type needs it.
+4. **Synthesis** produces a structured strategic brief: Pydantic-validated JSON rendered by the dashboard (risk matrix, competitor radar, export).
+
+Progress streams to the browser over Server-Sent Events. Results are stored in PostgreSQL.
 
 ## Architecture
 
-```
- ┌────────────────────────────────────────────────────────────────────────────┐
- │                        ASIS v3.0 — System Architecture                     │
- │                                                                            │
- │  LAYER 1 — CLIENT                                                          │
- │  ┌──────────────────────────────────────────────────────────────────────┐  │
- │  │  Next.js 14 Dashboard  (port 3000)                                   │  │
- │  │  AgentStatusPanel · StrategyBrief · RiskMatrix · ExportControls      │  │
- │  └────────────────────┬─────────────────────────────────────────────────┘  │
- │                       │ SSE stream + REST                                  │
- │  LAYER 2 — API GATEWAY                                                     │
- │  ┌──────────────────────────────────────────────────────────────────────┐  │
- │  │  FastAPI (port 8000) · JWT Auth · SlowAPI rate-limit · OTEL tracing  │  │
- │  └────────────────────┬─────────────────────────────────────────────────┘  │
- │                       │                                                    │
- │  LAYER 3 — AGENT PIPELINE (LangGraph StateGraph)                           │
- │  ┌──────────────────────────────────────────────────────────────────────┐  │
- │  │                                                                      │  │
- │  │  START → [Orchestrator] ──────────────────────────────────────────┐  │  │
- │  │                │                                                  │  │  │
- │  │         ┌──────┴───────────────────────┐                          │  │  │
- │  │         ▼              ▼               ▼                          │  │  │
- │  │  [Market Intel]  [Risk Assess]  [Competitor]  (parallel)          │  │  │
- │  │         └──────┬───────────────────────┘                          │  │  │
- │  │                ▼                                                  │  │  │
- │  │       [Financial Reasoning] ──────────────────────────────────────┘  │  │
- │  │                ▼                                                      │  │
- │  │          [Synthesis Agent]                                            │  │
- │  │                ▼                                                      │  │
- │  │          StrategicBrief JSON                                          │  │
- │  └──────────────────────────────────────────────────────────────────────┘  │
- │                                                                            │
- │  LAYER 4 — LLM PROXY                                                       │
- │  ┌──────────────────────────────────────────────────────────────────────┐  │
- │  │  LiteLLM (port 4000) · claude-sonnet-4-5 · claude-haiku-4-5         │  │
- │  │  text-embedding-3-small · Master key auth                            │  │
- │  └──────────────────────────────────────────────────────────────────────┘  │
- │                                                                            │
- │  LAYER 5 — MEMORY & VECTOR STORE                                           │
- │  ┌───────────────────────┐  ┌────────────────────────────────────────────┐ │
- │  │  Qdrant (port 6333)   │  │  Mem0 — persistent cross-session memory    │ │
- │  │  Semantic search      │  │  User context + company profiles           │ │
- │  └───────────────────────┘  └────────────────────────────────────────────┘ │
- │                                                                            │
- │  LAYER 6 — TASK QUEUE                                                      │
- │  ┌──────────────────────────────────────────────────────────────────────┐  │
- │  │  Celery Worker · Redis broker (db 1) · Redis result backend (db 2)   │  │
- │  └──────────────────────────────────────────────────────────────────────┘  │
- │                                                                            │
- │  LAYER 7 — WORKFLOW AUTOMATION                                             │
- │  ┌──────────────────────────────────────────────────────────────────────┐  │
- │  │  n8n (port 5678) · Scheduled intelligence briefs · Webhook triggers  │  │
- │  │  Report delivery · Slack/email notifications                         │  │
- │  └──────────────────────────────────────────────────────────────────────┘  │
- │                                                                            │
- │  LAYER 8 — PERSISTENCE                                                     │
- │  ┌───────────────────────────┐  ┌─────────────────────────────────────┐    │
- │  │  PostgreSQL 16 (port 5432)│  │  Redis 7 (port 6379)                │    │
- │  │  Users · Analyses · Reports│  │  Cache · Rate limits · Sessions     │    │
- │  └───────────────────────────┘  └─────────────────────────────────────┘    │
- │                                                                            │
- │  LAYER 9 — OBSERVABILITY                                                   │
- │  ┌──────────────────────────────────────────────────────────────────────┐  │
- │  │  Langfuse (port 3001) · LLM trace logging · Token usage · Latency   │  │
- │  │  OpenTelemetry SDK · OTLP exporter · structlog                       │  │
- │  └──────────────────────────────────────────────────────────────────────┘  │
- └────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+  UI[Next.js 14 dashboard] -- REST + SSE --> API[FastAPI /v1<br/>JWT auth, rate limit]
+  API --> G
+  subgraph G[LangGraph StateGraph]
+    O[orchestrator] --> MI[market_intelligence]
+    O --> RA[risk_assessment]
+    O --> CA[competitor_analysis]
+    MI --> GA[gather]
+    RA --> GA
+    CA --> GA
+    GA --> FR[financial_reasoning]
+    GA --> S[synthesis]
+    FR --> S
+  end
+  G -- OpenAI-compatible API --> LLM[(Groq-hosted models)]
+  API --> PG[(PostgreSQL)]
+  API --> R[(Redis / Celery)]
+  G -. optional .-> Q[(Qdrant + Mem0 memory)]
+  N8N[n8n workflows] -. webhooks .-> API
 ```
 
-### Agent Responsibilities
+In the final commits the agents call an OpenAI-compatible endpoint, Groq by default, with per-agent model names set in [`asis/backend/config/settings.py`](asis/backend/config/settings.py). Earlier commits used Anthropic via a LiteLLM proxy. The commit history records each switch.
 
-| Agent | Role | Tools |
+## Features (as implemented in this prototype)
+
+- Multi-agent LangGraph pipeline with parallel fan-out/fan-in ([`asis/backend/graph/asis_graph.py`](asis/backend/graph/asis_graph.py))
+- Pydantic schemas for every agent output and the final brief ([`asis/backend/agents/schemas.py`](asis/backend/agents/schemas.py))
+- FastAPI backend: JWT register/login, analyses, reports, SSE streaming, health, evaluation endpoints
+- PostgreSQL models with Alembic migrations and PostgreSQL row-level security policies
+- Next.js 14 dashboard: agent status panel, strategy brief, risk matrix, competitor radar, PDF export
+- Data connectors (web search, news, financial data) under [`asis/backend/mcp/`](asis/backend/mcp/)
+- Docker Compose stack (Postgres, Redis, Qdrant, Langfuse v2, n8n, backend, Celery, frontend), plus Terraform/Cloud Build files for GCP
+- 7 n8n workflow definitions under [`asis/n8n/workflows/`](asis/n8n/workflows/)
+
+## Tech stack
+
+Python 3.11 · FastAPI · LangGraph · Pydantic v2 · SQLAlchemy (async) · PostgreSQL · Alembic · Celery + Redis · Qdrant · Mem0 · Next.js 14 · TypeScript · Tailwind CSS · Recharts · Framer Motion · Docker Compose · n8n · Terraform (GCP)
+
+## Quick start
+
+```bash
+cp .env.example .env          # set LLM_API_KEY and JWT_SECRET at minimum
+docker compose up --build     # Postgres, Redis, Qdrant, backend, frontend, ...
+# frontend: http://localhost:3000   backend: http://localhost:8000/v1/health
+```
+
+> `docker-compose.yml` sets `NEXT_PUBLIC_API_URL` to the IP of the original cloud VM. For a local run, override it to `http://localhost:8000/v1`.
+
+Frontend only (no backend), as used for the screenshots:
+
+```bash
+cd asis/frontend && npm ci && npx next dev
+```
+
+## Environment variables
+
+All variables are listed in [`.env.example`](.env.example). The main ones are:
+
+| Variable | Required | Purpose |
 |---|---|---|
-| **Orchestrator** | Query classification, execution planning, context routing | — |
-| **Market Intelligence** | Market sizing, trend analysis, regulatory landscape | Tavily, NewsAPI |
-| **Risk Assessment** | Geopolitical, regulatory, and operational risk register | NewsAPI, Tavily |
-| **Financial Reasoning** | Cost modelling, ROI projections, peer benchmarking | FMP API |
-| **Competitor Analysis** | Porter Five Forces, competitor profiling | Tavily, NewsAPI |
-| **Synthesis** | Board-ready strategic brief integration | — |
+| `LLM_API_KEY` | yes (to run analyses) | Key for the OpenAI-compatible LLM endpoint (Groq by default) |
+| `LLM_BASE_URL` | no | Override the LLM endpoint |
+| `JWT_SECRET` | yes | ≥ 32 characters, signs auth tokens |
+| `DATABASE_URL` | yes | `postgresql+asyncpg://...` |
+| `REDIS_URL`, `CELERY_*` | for background tasks | Redis broker / result backend |
+| `TAVILY_API_KEY`, `FMP_API_KEY`, `NEWSAPI_KEY` | optional | External data connectors |
+| `LANGFUSE_*`, `QDRANT_*` | optional | Tracing and vector memory |
 
----
-
-## Project Structure
-
-```
-Strategic-Decision-Maker/
-├── asis/
-│   ├── backend/
-│   │   ├── agents/           # 6 specialist agents + base class + Pydantic schemas
-│   │   ├── graph/            # LangGraph StateGraph + AgentState TypedDict
-│   │   ├── mcp/              # Web search, financial data, news, Drive wrappers
-│   │   ├── api/              # FastAPI routes (analysis, reports, auth, health)
-│   │   ├── db/               # SQLAlchemy ORM + Alembic migrations
-│   │   ├── memory/           # Mem0 integration + Qdrant vector ops
-│   │   ├── tasks/            # Celery task definitions + celery_app factory
-│   │   ├── evaluation/       # EvaluationEngine + SingleAgentBaseline
-│   │   ├── config/           # Pydantic Settings + structlog configuration
-│   │   ├── schemas/          # Shared Pydantic schemas
-│   │   ├── tests/            # pytest test suite
-│   │   ├── requirements.txt
-│   │   └── Dockerfile
-│   ├── frontend/
-│   │   ├── app/              # Next.js 14 App Router pages
-│   │   ├── components/       # AgentStatusPanel, StrategyBrief, RiskMatrix
-│   │   └── lib/              # API client + SSE stream utilities
-│   ├── n8n/
-│   │   ├── Dockerfile        # n8n custom image with pre-installed nodes
-│   │   └── workflows/        # Exported n8n workflow JSON files
-│   └── infra/
-│       ├── cloudbuild/
-│       │   ├── cloudbuild.backend.yaml
-│       │   └── cloudbuild.frontend.yaml
-│       └── terraform/
-│           ├── main.tf       # VPC, Cloud SQL, Redis, Cloud Run services
-│           ├── variables.tf
-│           ├── outputs.tf
-│           ├── secret_manager.tf
-│           └── iam.tf
-├── .github/
-│   └── workflows/
-│       ├── ci.yml            # PR lint + test pipeline
-│       └── deploy.yml        # Push-to-main Cloud Build trigger
-├── docker-compose.yml        # Full local dev stack (9 services)
-├── litellm_config.yaml       # LiteLLM model routing configuration
-└── .env.example              # All environment variables with descriptions
-```
-
----
-
-## Local Development Setup
-
-### Prerequisites
-
-- Docker Desktop 4.x+ (recommended) **or** Python 3.11+, Node 20+, PostgreSQL 16+
-- An [Anthropic API key](https://console.anthropic.com)
-
-### 1. Clone and configure
+## Testing
 
 ```bash
-git clone https://github.com/akshatb848/strategic-decision-maker.git
-cd Strategic-Decision-Maker
-cp .env.example .env
-# Edit .env — add ANTHROPIC_API_KEY and JWT_SECRET at minimum
+pip install -r asis/backend/requirements.txt aiosqlite
+# Schema tests run anywhere; route tests need PostgreSQL:
+export TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/asis_test
+export JWT_SECRET=local-test-secret-at-least-32-characters ENVIRONMENT=development
+pytest -c asis/backend/tests/pytest.ini asis/backend/tests
 ```
 
-### 2. Start the full stack
+The suite has 28 tests: agent and brief schema validation, plus auth and reports API routes run against a real PostgreSQL. Route tests are skipped when `TEST_DATABASE_URL` is unset. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs them against a PostgreSQL service container, along with a Ruff check for syntax errors and undefined names and a TypeScript type-check of the frontend. Line coverage of `asis/backend` is about 51%. The agents and graph are not exercised without an LLM key.
 
-```bash
-docker compose up --build
-```
-
-Services will start in dependency order. Wait ~60 seconds for all health checks to pass.
-
-| Service | URL | Description |
-|---|---|---|
-| Backend API | http://localhost:8000 | FastAPI application |
-| API Docs | http://localhost:8000/api/docs | Swagger UI |
-| Frontend | http://localhost:3000 | Next.js dashboard |
-| Langfuse | http://localhost:3001 | LLM observability |
-| n8n | http://localhost:5678 | Workflow automation |
-| LiteLLM | http://localhost:4000 | LLM proxy |
-| Qdrant | http://localhost:6333 | Vector store UI |
-
-### 3. Run database migrations
-
-```bash
-docker compose exec backend alembic upgrade head
-```
-
-### 4. Without Docker (manual)
-
-**Backend:**
-```bash
-cd asis/backend
-pip install -r requirements.txt
-createdb asis
-alembic upgrade head
-uvicorn asis.backend.api.main:app --reload --port 8000
-```
-
-**Celery worker (separate terminal):**
-```bash
-cd asis/backend
-celery -A asis.backend.tasks.celery_app worker --loglevel=info
-```
-
-**Frontend:**
-```bash
-cd asis/frontend
-npm install
-npm run dev
-```
-
----
-
-## GCP Deployment Guide
-
-### Prerequisites
-
-- GCP project with billing enabled
-- `gcloud` CLI authenticated (`gcloud auth login`)
-- Terraform >= 1.6 installed
-- Artifact Registry repository named `asis` created in your project
-
-### 1. Provision infrastructure with Terraform
-
-```bash
-cd asis/infra/terraform
-
-# Initialise — uses GCS backend (bucket: asis-tf-state)
-terraform init
-
-# Preview changes
-terraform plan \
-  -var="project_id=YOUR_PROJECT_ID" \
-  -var="environment=prod" \
-  -var="db_password=YOUR_SECURE_PASSWORD"
-
-# Apply
-terraform apply \
-  -var="project_id=YOUR_PROJECT_ID" \
-  -var="environment=prod" \
-  -var="db_password=YOUR_SECURE_PASSWORD"
-```
-
-### 2. Populate Secret Manager secrets
-
-```bash
-# Set each secret value (repeat for all secrets)
-echo -n "sk-ant-api03-..." | \
-  gcloud secrets versions add ANTHROPIC_API_KEY --data-file=-
-
-echo -n "postgresql+asyncpg://asis:PASS@/asis?host=/cloudsql/PROJECT:REGION:INSTANCE" | \
-  gcloud secrets versions add DATABASE_URL --data-file=-
-
-# ... repeat for JWT_SECRET, REDIS_URL, TAVILY_API_KEY, FMP_API_KEY,
-#     NEWSAPI_KEY, LITELLM_MASTER_KEY, N8N_WEBHOOK_SECRET,
-#     LANGFUSE_SECRET_KEY, MEM0_API_KEY
-```
-
-### 3. Deploy with Cloud Build
-
-```bash
-# Deploy backend
-gcloud builds submit \
-  --config=asis/infra/cloudbuild/cloudbuild.backend.yaml \
-  --substitutions=COMMIT_SHA=$(git rev-parse HEAD),_PROJECT_ID=YOUR_PROJECT_ID \
-  .
-
-# Deploy frontend
-gcloud builds submit \
-  --config=asis/infra/cloudbuild/cloudbuild.frontend.yaml \
-  --substitutions=COMMIT_SHA=$(git rev-parse HEAD),_PROJECT_ID=YOUR_PROJECT_ID,_NEXT_PUBLIC_API_URL=https://YOUR_BACKEND_URL/api/v1 \
-  .
-```
-
-### 4. CI/CD (GitHub Actions)
-
-Set the following GitHub repository secrets:
-
-| Secret | Description |
-|---|---|
-| `GCP_SA_KEY` | JSON key for a GCP service account with Cloud Build Editor and Storage Object Admin roles |
-| `GCP_PROJECT_ID` | Your GCP project ID |
-| `GCP_REGION` | Deployment region (default: `asia-south1`) |
-| `NEXT_PUBLIC_API_URL` | Public URL of the deployed backend |
-
-Pushes to `main` automatically trigger the deploy workflow. PRs to `main` run lint and tests.
-
----
-
-## API Reference
-
-All endpoints (except `/v1/health`) require `Authorization: Bearer <jwt_token>`.
-
-### Authentication
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/api/v1/auth/register` | Register a new user account |
-| `POST` | `/api/v1/auth/login` | Obtain a JWT access token |
-| `GET` | `/api/v1/auth/me` | Get current authenticated user info |
-| `POST` | `/api/v1/auth/refresh` | Refresh JWT token |
-
-### Analysis
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/api/v1/analysis` | Trigger ASIS multi-agent pipeline (SSE stream) |
-| `GET` | `/api/v1/analysis/{id}` | Retrieve analysis details and agent status |
-| `GET` | `/api/v1/analysis` | List paginated analysis history |
-
-#### POST /api/v1/analysis — Request body
-
-```json
-{
-  "query": "Should we enter the Indian fintech market in 2026?",
-  "company_context": {
-    "company_name": "Acme Financial",
-    "sector": "Financial Services",
-    "target_market": "India",
-    "hq_country": "United Kingdom",
-    "annual_revenue_usd_mn": 850
-  },
-  "options": {
-    "run_baseline": false,
-    "agents": ["market_intelligence", "risk_assessment", "financial_reasoning", "competitor_analysis"]
-  }
-}
-```
-
-#### SSE events streamed
+## Project structure
 
 ```
-event: agent_start        data: {"agent": "orchestrator"}
-event: agent_complete     data: {"agent": "orchestrator", "duration_ms": 3200}
-event: agent_start        data: {"agent": "market_intelligence"}
-event: agent_complete     data: {"agent": "market_intelligence", "duration_ms": 8100}
-event: agent_start        data: {"agent": "risk_assessment"}
-event: agent_complete     data: {"agent": "risk_assessment", "duration_ms": 7200}
-event: agent_start        data: {"agent": "financial_reasoning"}
-event: agent_complete     data: {"agent": "financial_reasoning", "duration_ms": 5400}
-event: agent_start        data: {"agent": "competitor_analysis"}
-event: agent_complete     data: {"agent": "competitor_analysis", "duration_ms": 6800}
-event: agent_start        data: {"agent": "synthesis"}
-event: agent_complete     data: {"agent": "synthesis", "duration_ms": 4100}
-event: analysis_complete  data: {"analysis_id": "uuid", "strategic_brief": {...}}
+asis/
+  backend/   FastAPI app, LangGraph graph, agents, schemas, DB models + migrations, Celery tasks, tests
+  frontend/  Next.js 14 dashboard
+  n8n/       n8n image + workflow JSON
+  infra/     Terraform + Cloud Build for GCP
+docs/        screenshots, original v3.0 README (docs/original-readme-v3.md)
+docker-compose*.yml, railway.toml, vercel.json   deployment configs from the prototype phase
 ```
 
-### Reports
+## Limitations
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/v1/reports` | Paginated list of strategic briefs (`?page=1&page_size=20`) |
-| `GET` | `/api/v1/reports/{id}` | Full StrategicBrief JSON |
-| `GET` | `/api/v1/reports/{id}/evaluation` | Evaluation scores vs baseline |
-| `DELETE` | `/api/v1/reports/{id}` | Delete a report |
+- **Superseded.** Fixes and features land in [Strategic-Consultant](https://github.com/Akshatb848/Strategic-Consultant), not here.
+- No hosted demo. The GCP VM deployment referenced in `docker-compose.yml` and `build-images.yml` is not maintained.
+- An analysis needs a working LLM key. There is no offline or demo mode in this version (Strategic-Consultant adds one).
+- The Next.js build ignores TypeScript and ESLint errors (`next.config.js`). CI runs `tsc --noEmit` separately, and it passes.
+- `next@14.2.18` has a published security advisory. Upgrade before any real deployment.
+- No evaluation results are published for this prototype.
 
-### Memory
+## License
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/v1/memory` | Retrieve user memory context |
-| `DELETE` | `/api/v1/memory` | Clear user memory |
+[MIT](LICENSE) © 2026 Akshat Banga
 
-### System
+## Author
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `GET` | `/v1/health` | None | System health check (all services) |
-| `GET` | `/v1/metrics` | Admin | Prometheus metrics |
-
----
-
-## n8n Workflow Guide
-
-n8n runs at http://localhost:5678 (admin / changeme by default — change in `.env`).
-
-### Pre-built Workflows
-
-Workflow JSON files are in `asis/n8n/workflows/` and are auto-loaded on startup.
-
-| Workflow | Trigger | Description |
-|---|---|---|
-| `scheduled_brief.json` | Daily cron (09:00 UTC) | Runs analysis for configured watchlist companies |
-| `webhook_trigger.json` | HTTP webhook | Triggers analysis from external systems |
-| `report_delivery.json` | Analysis complete event | Sends strategic brief via email / Slack |
-| `alert_monitor.json` | Hourly cron | Monitors news feeds for high-priority risk signals |
-
-### Calling ASIS from n8n
-
-Use an **HTTP Request** node with:
-- **URL:** `http://backend:8000/api/v1/analysis`
-- **Method:** POST
-- **Headers:** `Authorization: Bearer {{ $env.ASIS_API_KEY }}`
-- **Body:** Analysis request JSON (see API Reference above)
-
-### Securing webhooks
-
-Set `N8N_WEBHOOK_SECRET` in `.env`. All incoming webhooks to n8n will validate the `X-Webhook-Secret` header against this value.
-
----
-
-## Dissertation Evaluation Guide
-
-ASIS includes a built-in evaluation framework for the MSc dissertation's experimental methodology comparing multi-agent vs single-agent performance.
-
-### Evaluation Dimensions
-
-| Dimension | Weight | Description |
-|---|---|---|
-| `analytical_depth` | 25% | Breadth and depth of factors considered |
-| `factual_accuracy` | 25% | Sources cited vs claims made ratio |
-| `contextual_relevance` | 20% | Alignment to query and company context |
-| `actionability` | 20% | Quality and specificity of recommended next steps |
-| `internal_consistency` | 10% | Coherence and absence of contradictions across sections |
-
-### Running Evaluations
-
-**Trigger evaluation at analysis time:**
-
-Set `run_baseline: true` in the analysis request options. This runs both the full multi-agent pipeline and a single-agent baseline in parallel, then scores both.
-
-**Retrieve evaluation results:**
-
-```bash
-GET /api/v1/reports/{analysis_id}/evaluation
-```
-
-Response includes:
-```json
-{
-  "multi_agent_score": 0.87,
-  "baseline_score": 0.61,
-  "delta": 0.26,
-  "dimension_scores": {
-    "multi_agent": { "analytical_depth": 0.91, "factual_accuracy": 0.88, ... },
-    "baseline":    { "analytical_depth": 0.62, "factual_accuracy": 0.58, ... }
-  }
-}
-```
-
-### Running the Evaluation Test Suite
-
-```bash
-cd asis/backend
-pytest tests/evaluation/ -v --tb=short
-```
-
----
-
-## Running Tests
-
-```bash
-cd asis/backend
-pip install -r requirements.txt
-pytest tests/ -v --cov=asis/backend --cov-report=term-missing
-```
-
-For CI (SQLite in-memory, no external services):
-
-```bash
-DATABASE_URL="sqlite+aiosqlite:///:memory:" \
-JWT_SECRET="test-secret-32-chars-minimum-len" \
-ANTHROPIC_API_KEY="sk-ant-test" \
-pytest tests/ -v
-```
-
----
-
-## Environment Variables Reference
-
-| Variable | Required | Description | Example |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | Claude API key via LiteLLM | `sk-ant-api03-...` |
-| `OPENAI_API_KEY` | Yes | OpenAI key for embeddings | `sk-...` |
-| `JWT_SECRET` | Yes | JWT signing secret (min 32 chars) | `random-32-char-string` |
-| `DATABASE_URL` | Yes | PostgreSQL async connection string | `postgresql+asyncpg://asis:asis@localhost:5432/asis` |
-| `REDIS_URL` | Yes | Redis connection URL | `redis://localhost:6379/0` |
-| `LITELLM_PROXY_URL` | Yes | LiteLLM proxy base URL | `http://localhost:4000` |
-| `LITELLM_MASTER_KEY` | Yes | LiteLLM authentication key | `sk-dev-master-key` |
-| `QDRANT_URL` | Yes | Qdrant vector store URL | `http://localhost:6333` |
-| `QDRANT_API_KEY` | No | Qdrant API key (blank for local) | — |
-| `MEM0_API_KEY` | No | Mem0 persistent memory API key | `m0-...` |
-| `MEM0_BASE_URL` | No | Mem0 base URL | `https://api.mem0.ai` |
-| `LANGFUSE_PUBLIC_KEY` | No | Langfuse public key for tracing | `pk-lf-...` |
-| `LANGFUSE_SECRET_KEY` | No | Langfuse secret key (server only) | `sk-lf-...` |
-| `LANGFUSE_HOST` | No | Langfuse host URL | `http://localhost:3001` |
-| `TAVILY_API_KEY` | No | Tavily web search API key | `tvly-...` |
-| `FMP_API_KEY` | No | Financial Modeling Prep key | `abc123...` |
-| `NEWSAPI_KEY` | No | NewsAPI key for news context | `abc123...` |
-| `N8N_WEBHOOK_SECRET` | No | Shared secret for n8n webhooks | `random-secret` |
-| `CELERY_BROKER_URL` | No | Celery broker (Redis db 1) | `redis://localhost:6379/1` |
-| `CELERY_RESULT_BACKEND` | No | Celery result store (Redis db 2) | `redis://localhost:6379/2` |
-| `ALLOWED_ORIGINS` | No | CORS allowed origins | `http://localhost:3000` |
-| `ENVIRONMENT` | No | deployment | deployment environment | `development` |
-| `GCP_PROJECT_ID` | No | GCP project ID for cloud deploys | `my-gcp-project` |
-| `GCP_REGION` | No | GCP region | `asia-south1` |
-
----
-
-*ASIS v3.0 — MSc International Management, University of Sussex Delhi · Akshat Banga*
+**Akshat Banga** — [github.com/Akshatb848](https://github.com/Akshatb848)
